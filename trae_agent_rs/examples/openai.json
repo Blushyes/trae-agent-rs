@@ -1,0 +1,7 @@
+{
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "your_openai_api_key_here",
+  "model": "gpt-4",
+  "organization": "your_org_id_here",
+  "project": "your_project_id_here"
+}

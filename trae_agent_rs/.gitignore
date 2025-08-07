@@ -1,0 +1,42 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Configuration files with secrets
+trae_config.yaml
+trae_config.json
+*.env
+.env*
+openai.json
+anthropic.json
+google.json
+!examples/openai.json
+!examples/anthropic.json
+!examples/google.json
+
+# Trajectory files
+trajectories/
+*.trajectory.json
+
+# Patch files
+*.patch
+
+# Temporary files
+tmp/
+temp/
+.tmp/

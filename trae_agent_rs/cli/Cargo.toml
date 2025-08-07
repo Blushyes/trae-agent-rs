@@ -1,0 +1,50 @@
+[package]
+name = "trae-agent-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "CLI application for Trae Agent - LLM-based agent for software engineering tasks"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "trae"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+iocraft = { workspace = true }
+crossterm = { workspace = true }
+smol = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+shellexpand = { workspace = true }
+
+# Local dependencies
+trae-agent-core = { path = "../core" }
+
+# CLI-specific dependencies
+console = "0.15"
+indicatif = "0.17"
+dialoguer = "0.11"
+colored = "2.0"
+ctrlc = "3.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.0"
