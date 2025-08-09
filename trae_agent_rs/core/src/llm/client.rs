@@ -181,7 +181,7 @@ pub enum ToolChoice {
 impl Default for ChatOptions {
     fn default() -> Self {
         Self {
-            max_tokens: Some(131072),
+            max_tokens: Some(8192),
             temperature: Some(0.7),
             top_p: Some(1.0),
             top_k: None,
