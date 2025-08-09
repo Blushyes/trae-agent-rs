@@ -7,28 +7,82 @@ use tokio::sync::mpsc;
 use trae_agent_core::{Config, agent::TraeAgent};
 use crate::output::interactive_handler::InteractiveMessage;
 use std::sync::OnceLock;
+use unicode_width::UnicodeWidthStr;
+/// Get terminal width with fallback
+fn get_terminal_width() -> usize {
+    match crossterm::terminal::size() {
+        Ok((cols, _)) => {
+            // Reserve some space for padding and borders, and ensure minimum width
+            let usable_width = (cols as usize).saturating_sub(8); // 8 chars for padding/borders
+            std::cmp::max(usable_width, 40) // Minimum 40 chars
+        }
+        Err(_) => 80, // Fallback to 80 columns
+    }
+}
 
 /// Wrap text to fit within specified width, breaking at word boundaries
+/// Uses unicode-aware width calculation for proper handling of CJK characters
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
-        if line.len() <= max_width {
+        let line_width = UnicodeWidthStr::width(line);
+        if line_width <= max_width {
             lines.push(line.to_string());
         } else {
+            // For very long lines, we need to break them more aggressively
             let mut current_line = String::new();
+            let mut current_width = 0;
+
+            // First try word-based wrapping
             let words: Vec<&str> = line.split_whitespace().collect();
 
             for word in words {
-                // If adding this word would exceed the limit
-                if !current_line.is_empty() && current_line.len() + 1 + word.len() > max_width {
-                    lines.push(current_line);
-                    current_line = word.to_string();
-                } else {
+                let word_width = UnicodeWidthStr::width(word);
+
+                // If the word itself is too long, we'll need character-based wrapping
+                if word_width > max_width {
+                    // Push current line if it has content
                     if !current_line.is_empty() {
-                        current_line.push(' ');
+                        lines.push(current_line);
+                        current_line = String::new();
+                        current_width = 0;
                     }
-                    current_line.push_str(word);
+
+                    // Character-based wrapping for very long words
+                    let mut char_line = String::new();
+                    let mut char_width = 0;
+
+                    for ch in word.chars() {
+                        let ch_width = UnicodeWidthStr::width(ch.to_string().as_str());
+                        if char_width + ch_width > max_width && !char_line.is_empty() {
+                            lines.push(char_line);
+                            char_line = ch.to_string();
+                            char_width = ch_width;
+                        } else {
+                            char_line.push(ch);
+                            char_width += ch_width;
+                        }
+                    }
+
+                    if !char_line.is_empty() {
+                        current_line = char_line;
+                        current_width = char_width;
+                    }
+                } else {
+                    // Normal word wrapping
+                    if current_width > 0 && current_width + 1 + word_width > max_width {
+                        lines.push(current_line);
+                        current_line = word.to_string();
+                        current_width = word_width;
+                    } else {
+                        if current_width > 0 {
+                            current_line.push(' ');
+                            current_width += 1;
+                        }
+                        current_line.push_str(word);
+                        current_width += word_width;
+                    }
                 }
             }
 
@@ -262,51 +316,58 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             height: 100pct,
             padding: 1,
         ) {
-            // Header with TRAE logo and tips (only show when no messages)
-            #(if messages.read().is_empty() {
-                Some(element! {
-                    View(
-                        margin_bottom: 2,
-                        flex_direction: FlexDirection::Column,
-                    ) {
-                        View(margin_bottom: 2) {
-                            TraeLogo
-                        }
-                        View(
-                            flex_direction: FlexDirection::Column,
-                        ) {
-                            Text(
-                                content: "Tips for getting started:",
-                                color: Color::White,
-                            )
-                            Text(
-                                content: "1. Ask questions, edit files, or run commands.",
-                                color: Color::White,
-                            )
-                            Text(
-                                content: "2. Be specific for the best results.",
-                                color: Color::White,
-                            )
-                            Text(
-                                content: "3. /help for more information.",
-                                color: Color::White,
-                            )
-                        }
-                    }
-                })
-            } else {
-                None
-            })
-
-            // Chat messages area - 支持文本换行，防止UI错乱
+            // Scrollable content area - takes up all available space except bottom fixed area
             View(
                 flex_grow: 1.0,
-                margin_bottom: 1,
                 flex_direction: FlexDirection::Column,
+                overflow: Overflow::Hidden, // Prevent content from overflowing
             ) {
+                // Header with TRAE logo and tips (only show when no messages)
+                #(if messages.read().is_empty() {
+                    Some(element! {
+                        View(
+                            margin_bottom: 2,
+                            flex_direction: FlexDirection::Column,
+                        ) {
+                            View(margin_bottom: 2) {
+                                TraeLogo
+                            }
+                            View(
+                                flex_direction: FlexDirection::Column,
+                            ) {
+                                Text(
+                                    content: "Tips for getting started:",
+                                    color: Color::White,
+                                )
+                                Text(
+                                    content: "1. Ask questions, edit files, or run commands.",
+                                    color: Color::White,
+                                )
+                                Text(
+                                    content: "2. Be specific for the best results.",
+                                    color: Color::White,
+                                )
+                                Text(
+                                    content: "3. /help for more information.",
+                                    color: Color::White,
+                                )
+                            }
+                        }
+                    })
+                } else {
+                    None
+                })
+
+                // Chat messages area - 支持文本换行，防止UI错乱
+                View(
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    overflow: Overflow::Scroll, // Enable scrolling for long content
+                ) {
                 #(messages.read().iter().map(|(role, content)| {
-                    // 将长文本按行宽换行，防止自动换行导致UI错乱
-                    let wrapped_lines = wrap_text(content, 120); // 使用120字符作为行宽限制
+                    // 动态获取终端宽度并换行，防止自动换行导致UI错乱
+                    let terminal_width = get_terminal_width();
+                    let wrapped_lines = wrap_text(content, terminal_width);
 
                     if role == "user" {
                         element! {
@@ -352,28 +413,35 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                         }
                     }
                 }))
+
+                // Processing indicator
+                #(is_processing.get().then(|| element! {
+                    View(margin_bottom: 1) {
+                        Text(
+                            content: "ℹ Processing...",
+                            color: Color::Rgb { r: 100, g: 149, b: 237 },
+                        )
+                    }
+                }))
+                }
             }
 
-            // Processing indicator
-            #(is_processing.get().then(|| element! {
-                View(margin_bottom: 1) {
-                    Text(
-                        content: "ℹ Processing...",
-                        color: Color::Rgb { r: 100, g: 149, b: 237 },
-                    )
-                }
-            }))
-
-            // Input area - 简约边框风格，单行高度
+            // Fixed bottom area for input and status - this should never move
             View(
-                border_style: BorderStyle::Round,
-                border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
-                padding_left: 1,
-                padding_right: 1,
-                padding_top: 0,
-                padding_bottom: 0,
-                margin_bottom: 1,
+                flex_shrink: 0.0, // Prevent shrinking
+                flex_direction: FlexDirection::Column,
             ) {
+                // Input area - 简约边框风格，单行高度
+                View(
+                    border_style: BorderStyle::Round,
+                    border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
+                    padding_left: 1,
+                    padding_right: 1,
+                    padding_top: 0,
+                    padding_bottom: 0,
+                    margin_bottom: 1,
+                    height: 3, // Fixed height to prevent expansion
+                ) {
                 View(
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
@@ -398,9 +466,9 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                         })
                     })
                 }
-            }
+                }
 
-            // Status bar - 简约风格
+                // Status bar - 简约风格
             View(
                 padding: 1,
             ) {
@@ -408,6 +476,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
                     color: Color::DarkGrey,
                 )
+            }
             }
         }
     }
