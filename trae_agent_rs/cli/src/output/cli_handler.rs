@@ -111,26 +111,41 @@ impl AgentOutput for CliOutputHandler {
     async fn emit_event(&self, event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match event {
             AgentEvent::ExecutionStarted { context } => {
-                println!("🚀 Starting task execution...");
-                println!("📝 Task: {}", context.task);
-                println!("📁 Project path: {}", context.project_path);
-                println!();
+                if self.config.show_debug {
+                    println!("🚀 Starting task execution...");
+                    println!("📝 Task: {}", context.task);
+                    println!("📁 Project path: {}", context.project_path);
+                    println!();
+                }
+                // In normal mode, just show the task execution header
                 println!("⏳ Executing task...");
                 println!("Task: {}", context.task);
             }
             
             AgentEvent::ExecutionCompleted { context, success, summary } => {
-                if success {
-                    println!("✅ Task Completed!");
-                    println!();
-                    println!("Summary: {}", summary);
-                } else {
-                    println!("❌ Task Failed!");
-                    println!();
-                    println!("Error: {}", summary);
+                if self.config.show_debug {
+                    if success {
+                        println!("✅ Task Completed!");
+                        println!();
+                        println!("Summary: {}", summary);
+                    } else {
+                        println!("❌ Task Failed!");
+                        println!();
+                        println!("Error: {}", summary);
+                    }
                 }
+                // Always show execution statistics
                 println!("📈 Executed {} steps", context.current_step);
                 println!("⏱️  Duration: {:.2}s", context.execution_time.as_secs_f64());
+
+                // Show token usage if available
+                let token_usage = &context.token_usage;
+                if token_usage.total_tokens > 0 {
+                    println!("🪙 Tokens: {} input + {} output = {} total",
+                        token_usage.input_tokens,
+                        token_usage.output_tokens,
+                        token_usage.total_tokens);
+                }
             }
             
             AgentEvent::StepStarted { step_info } => {
@@ -144,15 +159,66 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::ToolExecutionStarted { tool_info } => {
-                self.handle_tool_update(&tool_info).await?;
+                // Always show executing status (white dot)
+                println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                if self.config.realtime_updates {
+                    let mut active_tools = self.active_tools.lock().await;
+                    active_tools.insert(tool_info.execution_id.clone(), tool_info);
+                }
             }
-            
+
             AgentEvent::ToolExecutionUpdated { tool_info } => {
                 self.handle_tool_update(&tool_info).await?;
             }
-            
+
             AgentEvent::ToolExecutionCompleted { tool_info } => {
-                self.handle_tool_update(&tool_info).await?;
+                if self.config.realtime_updates {
+                    // Real-time mode: update the existing line
+                    let mut active_tools = self.active_tools.lock().await;
+                    if active_tools.contains_key(&tool_info.execution_id) {
+                        // Clear current line and move cursor up to overwrite the executing line
+                        use std::io::Write;
+                        // Move up one line, clear the line, and return to beginning
+                        print!("\x1b[F\x1b[2K");
+                        std::io::stdout().flush().unwrap_or(());
+                        println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+
+                        // Show result content if available
+                        if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
+                            println!("{}", result_display);
+                        }
+
+                        // Show diff for edit tools
+                        if tool_info.tool_name == "str_replace_based_edit_tool" {
+                            if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
+                                println!("{}", diff_display);
+                            }
+                        }
+
+                        active_tools.remove(&tool_info.execution_id);
+                    } else {
+                        // Tool wasn't tracked, just show the final status
+                        println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                        if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
+                            println!("{}", result_display);
+                        }
+                    }
+                } else {
+                    // Non-real-time mode: show completion status and results
+                    println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+
+                    // Show result content if available
+                    if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
+                        println!("{}", result_display);
+                    }
+
+                    // Show diff for edit tools
+                    if tool_info.tool_name == "str_replace_based_edit_tool" {
+                        if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
+                            println!("{}", diff_display);
+                        }
+                    }
+                }
             }
             
             AgentEvent::AgentThinking { step_number: _, thinking } => {

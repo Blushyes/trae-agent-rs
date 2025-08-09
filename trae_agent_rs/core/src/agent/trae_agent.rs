@@ -4,7 +4,7 @@ use crate::agent::{ Agent, AgentExecution, AgentResult };
 use crate::agent::prompt::{ build_system_prompt_with_context, build_user_message };
 use crate::config::{ AgentConfig, Config };
 use crate::config::agent_config::OutputMode;
-use crate::output::{AgentOutput, AgentEvent, AgentExecutionContext, ToolExecutionInfo, ToolExecutionInfoBuilder, ToolExecutionStatus};
+use crate::output::{AgentOutput, AgentEvent, AgentExecutionContext, ToolExecutionInfo, ToolExecutionInfoBuilder, ToolExecutionStatus, TokenUsage};
 use crate::error::{ AgentError, Result };
 use crate::llm::{ LlmClient, LlmMessage, LlmResponse, ChatOptions };
 use crate::tools::{ ToolExecutor, ToolRegistry };
@@ -261,6 +261,15 @@ impl TraeAgent {
         // Make LLM request (non-streaming)
         let response = self.llm_client.chat_completion(messages, Some(tool_definitions), options).await?;
 
+        // Update token usage
+        if let Some(usage) = &response.usage {
+            if let Some(context) = &mut self.execution_context {
+                context.token_usage.input_tokens += usage.prompt_tokens;
+                context.token_usage.output_tokens += usage.completion_tokens;
+                context.token_usage.total_tokens += usage.total_tokens;
+            }
+        }
+
         // Record LLM response
         if let Some(recorder) = &self.trajectory_recorder {
             recorder.record(
@@ -440,6 +449,7 @@ impl TraeAgent {
             max_steps: self.config.max_steps,
             current_step: 0,
             execution_time: std::time::Duration::from_secs(0),
+            token_usage: TokenUsage::default(),
         });
 
         // Emit execution started event

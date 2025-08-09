@@ -70,6 +70,17 @@ pub struct AgentStepInfo {
     pub completed: bool,
 }
 
+/// Token usage statistics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    /// Total input tokens consumed
+    pub input_tokens: u32,
+    /// Total output tokens generated
+    pub output_tokens: u32,
+    /// Total tokens (input + output)
+    pub total_tokens: u32,
+}
+
 /// Agent execution context information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentExecutionContext {
@@ -85,6 +96,8 @@ pub struct AgentExecutionContext {
     pub current_step: usize,
     /// Total execution time so far
     pub execution_time: std::time::Duration,
+    /// Token usage statistics
+    pub token_usage: TokenUsage,
 }
 
 /// Events that can be emitted during agent execution

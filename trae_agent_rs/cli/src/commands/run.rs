@@ -34,12 +34,16 @@ pub async fn run_command(
             ).await
         {
             Ok(config) => {
-                println!("📋 Loaded API-based configuration");
+                if debug_output {
+                    println!("📋 Loaded API-based configuration");
+                }
                 config
             }
             Err(e) => {
-                println!("⚠️  Failed to load configuration: {}", e);
-                println!("📋 Using default configuration");
+                if debug_output {
+                    println!("⚠️  Failed to load configuration: {}", e);
+                    println!("📋 Using default configuration");
+                }
                 Config::default()
             }
         }
@@ -47,11 +51,15 @@ pub async fn run_command(
         // Try API-based configuration first
         match Config::from_api_configs(".").await {
             Ok(config) => {
-                println!("📋 Loaded API-based configuration");
+                if debug_output {
+                    println!("📋 Loaded API-based configuration");
+                }
                 config
             }
             Err(_) => {
-                println!("📋 Using default configuration");
+                if debug_output {
+                    println!("📋 Using default configuration");
+                }
                 Config::default()
             }
         }
@@ -67,7 +75,9 @@ pub async fn run_command(
     }
 
     let max_steps = max_steps.unwrap_or(200);
-    println!("🔢 Max steps: {}", max_steps);
+    if debug_output {
+        println!("🔢 Max steps: {}", max_steps);
+    }
 
     // Initialize agent with proper configuration
     let mut agent_config = _config.agents.get("trae_agent").cloned().unwrap_or_default();
@@ -84,7 +94,7 @@ pub async fn run_command(
         use_colors: true,
         show_debug: debug_output,
         show_timestamps: false,
-        realtime_updates: true,
+        realtime_updates: true, // Always enable realtime updates for better UX
     };
     let cli_output = Box::new(CliOutputHandler::new(cli_config));
 
@@ -102,15 +112,19 @@ pub async fn run_command(
         println!("📊 Trajectory file: {}", trajectory_file.display());
     }
 
-    // Show system prompt being used
-    println!("\n🤖 Using Trae Agent system prompt (consistent with Python version)");
-    println!("📋 System prompt preview: TraeAgent system prompt loaded...");
+    if debug_output {
+        // Show system prompt being used
+        println!("\n🤖 Using Trae Agent system prompt (consistent with Python version)");
+        println!("📋 System prompt preview: TraeAgent system prompt loaded...");
+    }
 
     // Get current working directory
     let current_dir = working_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let project_path = current_dir.canonicalize().unwrap_or(current_dir);
 
-    println!("📁 Project path: {}", project_path.display());
+    if debug_output {
+        println!("📁 Project path: {}", project_path.display());
+    }
 
     // Execute the task using the real agent
 
