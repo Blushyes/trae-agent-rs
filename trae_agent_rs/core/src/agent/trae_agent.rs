@@ -4,6 +4,7 @@ use crate::agent::{ Agent, AgentExecution, AgentResult };
 use crate::agent::prompt::{ build_system_prompt_with_context, build_user_message };
 use crate::config::{ AgentConfig, Config };
 use crate::config::agent_config::OutputMode;
+use std::io::Write;
 use crate::error::{ AgentError, Result };
 use crate::llm::{ LlmClient, LlmMessage, LlmResponse, ChatOptions };
 use crate::tools::{ ToolExecutor, ToolRegistry };
@@ -281,15 +282,19 @@ impl TraeAgent {
                         OutputMode::Normal => {
                             // Normal mode: show simplified format
                             if name == "bash" {
-                                // For bash commands, show as Bash(command)
+                                // For bash commands, show executing status
+                                use crate::tools::output_formatter::{ToolOutputFormatter, ToolStatus};
+                                let formatter = ToolOutputFormatter::new();
                                 if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-                                    println!("Bash({})", command);
+                                    println!("{}", formatter.format_tool_status("Bash", command, ToolStatus::Executing));
                                 } else {
-                                    println!("Bash");
+                                    println!("{}", formatter.format_tool_status("Bash", "", ToolStatus::Executing));
                                 }
                             } else if name == "sequentialthinking" {
                                 // For thinking tool, we'll handle output differently later
                                 // Don't show execution message for thinking
+                            } else if name == "str_replace_based_edit_tool" {
+                                // For edit tool, don't show execution message - we'll show formatted result later
                             } else {
                                 // For other tools, show simple execution message
                                 println!("🔧 {}", name);
@@ -310,7 +315,7 @@ impl TraeAgent {
                     }
 
                     // Execute tool
-                    let tool_result = self.tool_executor.execute(tool_call).await?;
+                    let tool_result = self.tool_executor.execute(tool_call.clone()).await?;
 
                     // Display tool result based on output mode
                     match self.config.output_mode {
@@ -348,14 +353,22 @@ impl TraeAgent {
                                     }
                                 }
                             } else if name == "bash" {
-                                // For bash commands, show the output directly
-                                if tool_result.success {
-                                    if !tool_result.content.trim().is_empty() {
-                                        println!("{}", tool_result.content);
-                                    }
+                                // For bash commands, update the status and show output
+                                use crate::tools::output_formatter::ToolOutputFormatter;
+                                let formatter = ToolOutputFormatter::new();
+
+                                if let Some(command) = tool_call.parameters.get("command").and_then(|v| v.as_str()) {
+                                    let formatted = formatter.format_tool_result_with_update("Bash", command, &tool_result.content, tool_result.success);
+                                    print!("{}", formatted);
+                                    std::io::stdout().flush().unwrap_or(());
                                 } else {
-                                    println!("Error: {}", tool_result.content);
+                                    let formatted = formatter.format_tool_result_with_update("Bash", "", &tool_result.content, tool_result.success);
+                                    print!("{}", formatted);
+                                    std::io::stdout().flush().unwrap_or(());
                                 }
+                            } else if name == "str_replace_based_edit_tool" {
+                                // For edit tool, show formatted output based on operation type
+                                self.display_edit_tool_result(&tool_call, &tool_result);
                             } else if name == "task_done" {
                                 // For task completion, show the summary
                                 println!("{}", tool_result.content);
@@ -405,6 +418,18 @@ impl TraeAgent {
 
         // If no tool calls, we're done for this step
         Ok(false)
+    }
+
+    /// Display formatted output for edit tool results
+    fn display_edit_tool_result(&self, tool_call: &crate::tools::ToolCall, tool_result: &crate::tools::ToolResult) {
+        use crate::tools::output_formatter::ToolOutputFormatter;
+
+        let formatter = ToolOutputFormatter::new();
+        let formatted_output = formatter.format_tool_result(tool_call, tool_result);
+
+        if !formatted_output.is_empty() {
+            println!("{}", formatted_output);
+        }
     }
 }
 
