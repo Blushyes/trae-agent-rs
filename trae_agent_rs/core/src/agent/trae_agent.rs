@@ -395,6 +395,16 @@ impl TraeAgent {
             return Ok(false);
         }
 
+        // If no tool calls, handle text response
+        if let Some(text_content) = response.message.get_text() {
+            if !text_content.trim().is_empty() {
+                // Emit the agent's text response as a normal message
+                self.output.normal(&text_content).await.unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to emit agent response message: {}", e);
+                });
+            }
+        }
+
         // If no tool calls, we're done for this step
         Ok(false)
     }
@@ -514,7 +524,7 @@ impl TraeAgent {
                     return Ok(AgentExecution::failure(
                         format!("Error in step {}: {}", step, e),
                         step,
-                        start_time.elapsed().as_millis() as u64
+                        duration
                     ));
                 }
             }

@@ -151,6 +151,7 @@ pub enum AgentEvent {
 pub enum MessageLevel {
     Debug,
     Info,
+    Normal,
     Warning,
     Error,
 }
@@ -188,6 +189,11 @@ pub trait AgentOutput: Send + Sync {
     /// Emit error message
     async fn error(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Error, content).await
+    }
+
+    /// Emit normal text message
+    async fn normal(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.emit_message(MessageLevel::Normal, content).await
     }
     
     /// Check if this output handler supports real-time updates

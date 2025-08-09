@@ -219,6 +219,10 @@ impl AgentOutput for CliOutputHandler {
                     MessageLevel::Info => {
                         info!("ℹ️  {}", content);
                     }
+                    MessageLevel::Normal => {
+                        // Normal text output - just print without any prefix or emoji
+                        println!("{}", content);
+                    }
                     MessageLevel::Warning => {
                         warn!("⚠️  Warning: {}", content);
                     }
