@@ -62,10 +62,21 @@ thread_local! {
 pub enum AppMessage {
     SystemMessage(String),
     InteractiveUpdate(InteractiveMessage),
-    AgentExecutionCompleted { success: bool },
+    AgentExecutionCompleted,
 }
 
 
+
+/// Get interactive context with fallback to defaults
+fn get_interactive_context() -> (Config, PathBuf) {
+    INTERACTIVE_CONTEXT.with(|ctx| {
+        if let Some(ctx) = ctx.borrow().clone() {
+            (ctx.config, ctx.project_path)
+        } else {
+            (Config::default(), PathBuf::from("."))
+        }
+    })
+}
 
 /// Convert AppMessage to UI message tuple (role, content)
 fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String)> {
@@ -90,7 +101,7 @@ fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String)
                 }
             }
         }
-        AppMessage::AgentExecutionCompleted { success: _ } => None,
+        AppMessage::AgentExecutionCompleted => None,
     }
 }
 
@@ -110,17 +121,18 @@ fn spawn_ui_agent_task(
     let mut is_processing_for_receiver = is_processing.clone();
     tokio::spawn(async move {
         while let Some(app_message) = ui_receiver.recv().await {
-            // Handle processing state changes
-            if matches!(app_message, AppMessage::AgentExecutionCompleted { .. }) {
-                is_processing_for_receiver.set(false);
-                continue;
-            }
-
-            // Convert and add message if applicable
-            if let Some((role, content)) = app_message_to_ui_message(app_message) {
-                let mut current_messages = messages_for_receiver.read().clone();
-                current_messages.push((role, content));
-                messages_for_receiver.set(current_messages);
+            match app_message {
+                AppMessage::AgentExecutionCompleted => {
+                    is_processing_for_receiver.set(false);
+                }
+                _ => {
+                    // Convert and add message if applicable
+                    if let Some((role, content)) = app_message_to_ui_message(app_message) {
+                        let mut current_messages = messages_for_receiver.read().clone();
+                        current_messages.push((role, content));
+                        messages_for_receiver.set(current_messages);
+                    }
+                }
             }
         }
     });
@@ -129,11 +141,11 @@ fn spawn_ui_agent_task(
     tokio::spawn(async move {
         match execute_agent_task(input, config, project_path, ui_sender.clone()).await {
             Ok(_) => {
-                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: true });
+                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted);
             }
             Err(e) => {
                 let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
-                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: false });
+                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted);
             }
         }
     });
@@ -196,13 +208,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let should_exit = hooks.use_state(|| false);
 
     // Get interactive context
-    let interactive_context = INTERACTIVE_CONTEXT.with(|ctx| ctx.borrow().clone());
-    let (config, project_path) = if let Some(ctx) = interactive_context {
-        (ctx.config, ctx.project_path)
-    } else {
-        // Fallback to default values
-        (Config::default(), PathBuf::from("."))
-    };
+    let (config, project_path) = get_interactive_context();
 
     // Handle terminal events
     hooks.use_terminal_events({
@@ -224,9 +230,10 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     }
                     KeyCode::Backspace => {
                         // Remove last character
-                        let mut current_input = input_value.read().clone();
-                        current_input.pop();
-                        input_value.set(current_input);
+                        let current = input_value.read().clone();
+                        if !current.is_empty() {
+                            input_value.set(current[..current.len() - 1].to_string());
+                        }
                     }
                     KeyCode::Enter => {
                         let input = input_value.read().clone();
@@ -234,12 +241,10 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             return;
                         }
 
-                        // Add user message
+                        // Add user message and update UI state
                         let mut current_messages = messages.read().clone();
                         current_messages.push(("user".to_string(), input.clone()));
                         messages.set(current_messages);
-
-                        // Clear input and set processing state
                         input_value.set(String::new());
                         is_processing.set(true);
 
