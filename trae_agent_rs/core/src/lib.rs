@@ -29,3 +29,16 @@ pub fn init_tracing() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 }
+
+/// Initialize tracing with a specific debug mode
+pub fn init_tracing_with_debug(debug: bool) {
+    let filter = if debug {
+        "debug"
+    } else {
+        "info"
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+        .init();
+}

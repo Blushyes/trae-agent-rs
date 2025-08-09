@@ -103,12 +103,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize tracing
-    let filter = if cli.verbose {
+    let filter = if cli.verbose || cli.debug_output {
         "debug"
     } else {
         "info"
     };
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
         .init();

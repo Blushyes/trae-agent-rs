@@ -8,16 +8,11 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{debug, info, warn, error};
 
 /// CLI output configuration
 #[derive(Debug, Clone)]
 pub struct CliOutputConfig {
-    /// Whether to use colors in output
-    pub use_colors: bool,
-    /// Whether to show debug messages
-    pub show_debug: bool,
-    /// Whether to show timestamps
-    pub show_timestamps: bool,
     /// Whether to support real-time updates
     pub realtime_updates: bool,
 }
@@ -25,9 +20,6 @@ pub struct CliOutputConfig {
 impl Default for CliOutputConfig {
     fn default() -> Self {
         Self {
-            use_colors: true,
-            show_debug: false,
-            show_timestamps: false,
             realtime_updates: true,
         }
     }
@@ -111,29 +103,24 @@ impl AgentOutput for CliOutputHandler {
     async fn emit_event(&self, event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match event {
             AgentEvent::ExecutionStarted { context } => {
-                if self.config.show_debug {
-                    println!("🚀 Starting task execution...");
-                    println!("📝 Task: {}", context.task);
-                    println!("📁 Project path: {}", context.project_path);
-                    println!();
-                }
+                debug!("🚀 Starting task execution...");
+                debug!("📝 Task: {}", context.task);
+                debug!("📁 Project path: {}", context.project_path);
+
                 // In normal mode, just show the task execution header
                 println!("⏳ Executing task...");
                 println!("Task: {}", context.task);
             }
             
             AgentEvent::ExecutionCompleted { context, success, summary } => {
-                if self.config.show_debug {
-                    if success {
-                        println!("✅ Task Completed!");
-                        println!();
-                        println!("Summary: {}", summary);
-                    } else {
-                        println!("❌ Task Failed!");
-                        println!();
-                        println!("Error: {}", summary);
-                    }
+                if success {
+                    debug!("✅ Task Completed!");
+                    debug!("Summary: {}", summary);
+                } else {
+                    debug!("❌ Task Failed!");
+                    debug!("Error: {}", summary);
                 }
+
                 // Always show execution statistics
                 println!("📈 Executed {} steps", context.current_step);
                 println!("⏱️  Duration: {:.2}s", context.execution_time.as_secs_f64());
@@ -149,9 +136,7 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::StepStarted { step_info } => {
-                if self.config.show_debug {
-                    println!("🔄 Step {}: {}", step_info.step_number, step_info.task);
-                }
+                debug!("🔄 Step {}: {}", step_info.step_number, step_info.task);
             }
             
             AgentEvent::StepCompleted { step_info: _ } => {
@@ -204,29 +189,25 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::AgentThinking { step_number: _, thinking } => {
-                if self.config.show_debug {
-                    println!("💭 Thinking: {}", thinking);
-                } else {
-                    // In normal mode, show thinking directly without prefix
-                    println!("{}", thinking);
-                }
+                debug!("💭 Thinking: {}", thinking);
+                // In normal mode, show thinking directly without prefix
+                println!("{}", thinking);
             }
             
             AgentEvent::Message { level, content, metadata: _ } => {
                 match level {
-                    MessageLevel::Debug if self.config.show_debug => {
-                        println!("🐛 Debug: {}", content);
+                    MessageLevel::Debug => {
+                        debug!("🐛 Debug: {}", content);
                     }
                     MessageLevel::Info => {
-                        println!("ℹ️  {}", content);
+                        info!("ℹ️  {}", content);
                     }
                     MessageLevel::Warning => {
-                        println!("⚠️  Warning: {}", content);
+                        warn!("⚠️  Warning: {}", content);
                     }
                     MessageLevel::Error => {
-                        println!("❌ Error: {}", content);
+                        error!("❌ Error: {}", content);
                     }
-                    _ => {} // Skip debug messages if not enabled
                 }
             }
         }

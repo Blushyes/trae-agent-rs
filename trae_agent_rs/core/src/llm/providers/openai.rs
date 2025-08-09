@@ -248,6 +248,11 @@ impl LlmClient for OpenAiClient {
         let converted_messages = self.convert_messages(messages)?;
         let converted_tools = tools.map(|t| self.convert_tools(t));
 
+        // Log tool usage - important for debugging tool calls
+        if let Some(ref tools) = converted_tools {
+            tracing::debug!("OpenAI request with {} tools enabled", tools.len());
+        }
+
         let mut request_builder = CreateChatCompletionRequestArgs::default();
         request_builder.model(&self.model);
         request_builder.messages(converted_messages);
@@ -268,19 +273,55 @@ impl LlmClient for OpenAiClient {
             }
         }
 
-        let request = request_builder.build().map_err(|e| LlmError::InvalidRequest {
-            message: format!("Failed to build request: {}", e),
+        let request = request_builder.build().map_err(|e| {
+            tracing::error!("Failed to build OpenAI request: {}", e);
+            LlmError::InvalidRequest {
+                message: format!("Failed to build request: {}", e),
+            }
         })?;
 
         let response = self.client
             .chat()
             .create(request).await
-            .map_err(|e| LlmError::ApiError {
-                status: 500, // async-openai doesn't expose status codes directly
-                message: e.to_string(),
+            .map_err(|e| {
+                tracing::error!("OpenAI API call failed: {}", e);
+                LlmError::ApiError {
+                    status: 500, // async-openai doesn't expose status codes directly
+                    message: e.to_string(),
+                }
             })?;
 
-        self.convert_response(response)
+        let result = self.convert_response(response);
+        match &result {
+            Ok(response) => {
+                // Log tool usage in response - critical for debugging tool calls
+                match &response.message.content {
+                    MessageContent::MultiModal(blocks) => {
+                        let tool_use_count = blocks.iter().filter(|block| matches!(block, ContentBlock::ToolUse { .. })).count();
+                        if tool_use_count > 0 {
+                            tracing::debug!("OpenAI response contains {} tool calls", tool_use_count);
+                            // Log tool call details
+                            for block in blocks {
+                                if let ContentBlock::ToolUse { id, name, .. } = block {
+                                    tracing::debug!("Tool call: {} (id: {})", name, id);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Log finish reason if it's tool-related
+                if let Some(FinishReason::ToolCalls) = response.finish_reason {
+                    tracing::debug!("OpenAI response finished due to tool calls");
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to convert OpenAI response: {}", e);
+            }
+        }
+
+        result
     }
 
     fn model_name(&self) -> &str {

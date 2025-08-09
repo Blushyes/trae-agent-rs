@@ -3,7 +3,7 @@
 use crate::agent::{ Agent, AgentExecution, AgentResult };
 use crate::agent::prompt::{ build_system_prompt_with_context, build_user_message };
 use crate::config::{ AgentConfig, Config };
-use crate::config::agent_config::OutputMode;
+
 use crate::output::{AgentOutput, AgentEvent, AgentExecutionContext, ToolExecutionInfo, ToolExecutionInfoBuilder, ToolExecutionStatus, TokenUsage};
 use crate::error::{ AgentError, Result };
 use crate::llm::{ LlmClient, LlmMessage, LlmResponse, ChatOptions };
@@ -112,10 +112,8 @@ impl TraeAgent {
             (String, String)
         > = std::collections::HashMap::new();
 
-        // Only show "Agent thinking..." in debug mode
-        if self.config.output_mode == OutputMode::Debug {
-            println!("🤖 Agent thinking...");
-        }
+        // Log agent thinking in debug mode
+        tracing::debug!("🤖 Agent thinking...");
 
         // Process stream chunks
         while let Some(chunk_result) = stream.next().await {
@@ -248,10 +246,8 @@ impl TraeAgent {
         // Get tool definitions
         let tool_definitions = self.tool_executor.get_tool_definitions();
 
-        // Only show "Agent thinking..." in debug mode
-        if self.config.output_mode == OutputMode::Debug {
-            println!("🤖 Agent thinking...");
-        }
+        // Log agent thinking in debug mode
+        tracing::debug!("🤖 Agent thinking...");
 
         // Set up options
         let options = Some(ChatOptions {
