@@ -56,7 +56,3 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"
-
-[[example]]
-name = "test_llm"
-path = "../examples/test_llm.rs"

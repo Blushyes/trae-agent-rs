@@ -18,29 +18,9 @@ pub struct Config {
 
     /// Model configurations
     pub models: HashMap<String, ModelConfig>,
-
-    /// MCP server configurations (optional)
-    pub mcp_servers: Option<HashMap<String, McpServerConfig>>,
-
-    /// Allowed MCP servers (optional)
-    pub allow_mcp_servers: Option<Vec<String>>,
-
-    /// Lakeview configuration (optional)
-    pub lakeview: Option<LakeviewConfig>,
 }
 
-/// MCP server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpServerConfig {
-    pub command: String,
-    pub args: Vec<String>,
-}
 
-/// Lakeview configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LakeviewConfig {
-    pub model: String,
-}
 
 impl Config {
 
@@ -149,9 +129,6 @@ impl Config {
             agents,
             model_providers,
             models,
-            mcp_servers: None,
-            allow_mcp_servers: None,
-            lakeview: None,
         })
     }
 
@@ -219,9 +196,6 @@ impl Default for Config {
             agents,
             model_providers,
             models,
-            mcp_servers: None,
-            allow_mcp_servers: None,
-            lakeview: None,
         }
     }
 }

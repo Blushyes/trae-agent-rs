@@ -67,30 +67,24 @@ cargo install --path cli
 
 ### Configuration
 
-Create a `trae_config.yaml` file:
+Trae Agent uses a flexible API-based configuration system. Create provider-specific JSON files:
 
-```yaml
-agents:
-  trae_agent:
-    model: claude_model
-    max_steps: 200
-    tools:
-      - bash
-      - str_replace_based_edit_tool
-      - sequentialthinking
-      - task_done
+```bash
+# For Anthropic
+echo '{"api_key": "your_anthropic_api_key", "model": "claude-3-5-sonnet-20241022"}' > anthropic.json
 
-model_providers:
-  anthropic:
-    api_key: your_anthropic_api_key
-    provider: anthropic
+# For OpenAI
+echo '{"api_key": "your_openai_api_key", "model": "gpt-4"}' > openai.json
 
-models:
-  claude_model:
-    model_provider: anthropic
-    model: claude-3-5-sonnet-20241022
-    max_tokens: 4096
-    temperature: 0.5
+# For Google
+echo '{"api_key": "your_google_api_key", "model": "gemini-pro"}' > google.json
+```
+
+Or use environment variables:
+
+```bash
+export ANTHROPIC_API_KEY="your_anthropic_api_key"
+export ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"
 ```
 
 ### Usage

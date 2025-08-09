@@ -24,9 +24,9 @@ use commands::{run_command, interactive_command, tools_command, test_command};
 #[command(about = "An LLM-based agent for software engineering tasks")]
 #[command(long_about = None)]
 struct Cli {
-    /// Configuration file path
-    #[arg(short, long, default_value = "trae_config.yaml")]
-    config: PathBuf,
+    /// Configuration directory path (for API provider configs)
+    #[arg(short, long, default_value = ".")]
+    config_dir: PathBuf,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
         }) => {
             run_command(
                 task,
-                cli.config,
+                cli.config_dir,
                 provider,
                 model,
                 api_key,
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
             trajectory_file,
             debug_output,
         }) => {
-            interactive_command(cli.config, trajectory_file, debug_output).await
+            interactive_command(cli.config_dir, trajectory_file, debug_output).await
         }
         Some(Commands::Tools) => {
             tools_command().await
@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
         }
         None => {
             // Default to interactive mode
-            interactive_command(cli.config, None, cli.debug_output).await
+            interactive_command(cli.config_dir, None, cli.debug_output).await
         }
     }
 }

@@ -18,8 +18,6 @@ Thumbs.db
 *.log
 
 # Configuration files with secrets
-trae_config.yaml
-trae_config.json
 *.env
 .env*
 openai.json

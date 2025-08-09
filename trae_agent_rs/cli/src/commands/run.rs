@@ -7,7 +7,7 @@ use tracing::{info, debug};
 /// Execute a single task
 pub async fn run_command(
     task: String,
-    config_path: PathBuf,
+    config_dir: PathBuf,
     provider: Option<String>,
     model: Option<String>,
     _api_key: Option<String>,
@@ -26,34 +26,15 @@ pub async fn run_command(
     // Output is now handled by the CLI output handler
 
     // Load configuration using API-based system
-    let _config = if config_path.exists() {
-        // Try to load from API-based configuration system
-        match
-            Config::from_api_configs(
-                config_path.parent().unwrap_or_else(|| std::path::Path::new("."))
-            ).await
-        {
-            Ok(config) => {
-                debug!("📋 Loaded API-based configuration");
-                config
-            }
-            Err(e) => {
-                debug!("⚠️  Failed to load configuration: {}", e);
-                debug!("📋 Using default configuration");
-                Config::default()
-            }
+    let _config = match Config::from_api_configs(&config_dir).await {
+        Ok(config) => {
+            debug!("📋 Loaded API-based configuration from: {}", config_dir.display());
+            config
         }
-    } else {
-        // Try API-based configuration first
-        match Config::from_api_configs(".").await {
-            Ok(config) => {
-                debug!("📋 Loaded API-based configuration");
-                config
-            }
-            Err(_) => {
-                debug!("📋 Using default configuration");
-                Config::default()
-            }
+        Err(e) => {
+            debug!("⚠️  Failed to load configuration from {}: {}", config_dir.display(), e);
+            debug!("📋 Using default configuration");
+            Config::default()
         }
     };
 

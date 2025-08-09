@@ -4,8 +4,60 @@ use anyhow::Result;
 use iocraft::prelude::*;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use tokio::sync::mpsc;
+use trae_agent_core::{Config, agent::TraeAgent};
+use crate::output::interactive_handler::{InteractiveOutputHandler, InteractiveMessage, InteractiveOutputConfig};
+use std::cell::RefCell;
 
+/// Wrap text to fit within specified width, breaking at word boundaries
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    for line in text.lines() {
+        if line.len() <= max_width {
+            lines.push(line.to_string());
+        } else {
+            let mut current_line = String::new();
+            let words: Vec<&str> = line.split_whitespace().collect();
+
+            for word in words {
+                // If adding this word would exceed the limit
+                if !current_line.is_empty() && current_line.len() + 1 + word.len() > max_width {
+                    lines.push(current_line);
+                    current_line = word.to_string();
+                } else {
+                    if !current_line.is_empty() {
+                        current_line.push(' ');
+                    }
+                    current_line.push_str(word);
+                }
+            }
+
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+/// Context for interactive mode
+#[derive(Debug, Clone)]
+struct InteractiveContext {
+    config: Config,
+    project_path: PathBuf,
+}
+
+/// Thread-local storage for interactive context
+thread_local! {
+    static INTERACTIVE_CONTEXT: RefCell<Option<InteractiveContext>> = RefCell::new(None);
+}
 
 /// Message types for the interactive app
 #[derive(Debug, Clone)]
@@ -13,6 +65,9 @@ pub enum AppMessage {
     UserInput(String),
     AgentResponse(String),
     SystemMessage(String),
+    InteractiveUpdate(InteractiveMessage),
+    AgentExecutionStarted,
+    AgentExecutionCompleted { success: bool },
     Quit,
 }
 
@@ -32,26 +87,29 @@ pub enum MessageRole {
 }
 
 /// Interactive chat application state
-#[derive(Debug)]
 pub struct InteractiveApp {
     messages: Arc<Mutex<VecDeque<ChatMessage>>>,
     input_buffer: String,
     is_processing: bool,
     sender: mpsc::UnboundedSender<AppMessage>,
     receiver: Arc<Mutex<mpsc::UnboundedReceiver<AppMessage>>>,
+    config: Config,
+    project_path: PathBuf,
 }
 
 impl InteractiveApp {
     /// Create a new interactive app
-    pub fn new() -> Self {
+    pub fn new(config: Config, project_path: PathBuf) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        
+
         Self {
             messages: Arc::new(Mutex::new(VecDeque::new())),
             input_buffer: String::new(),
             is_processing: false,
             sender,
             receiver: Arc::new(Mutex::new(receiver)),
+            config,
+            project_path,
         }
     }
     
@@ -96,17 +154,63 @@ impl InteractiveApp {
                     self.add_message(MessageRole::User, input.clone());
                     self.is_processing = true;
 
-                    // Simulate agent processing (placeholder)
-                    let response = format!("🤖 I would help you with: {}", input);
-                    self.add_message(MessageRole::Agent, response);
-                    self.is_processing = false;
+                    // Start agent execution asynchronously
+                    let sender = self.sender.clone();
+                    let config = self.config.clone();
+                    let project_path = self.project_path.clone();
+
+                    tokio::spawn(async move {
+                        let _ = sender.send(AppMessage::AgentExecutionStarted);
+
+                        match execute_agent_task(input, config, project_path, sender.clone()).await {
+                            Ok(_) => {
+                                let _ = sender.send(AppMessage::AgentExecutionCompleted { success: true });
+                            }
+                            Err(e) => {
+                                let _ = sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
+                                let _ = sender.send(AppMessage::AgentExecutionCompleted { success: false });
+                            }
+                        }
+                    });
                 }
                 AppMessage::AgentResponse(response) => {
                     self.add_message(MessageRole::Agent, response);
-                    self.is_processing = false;
                 }
                 AppMessage::SystemMessage(msg) => {
                     self.add_message(MessageRole::System, msg);
+                }
+                AppMessage::InteractiveUpdate(interactive_msg) => {
+                    match interactive_msg {
+                        InteractiveMessage::AgentThinking(thinking) => {
+                            self.add_message(MessageRole::Agent, thinking);
+                        }
+                        InteractiveMessage::ToolStatus(status) => {
+                            self.add_message(MessageRole::System, status);
+                        }
+                        InteractiveMessage::ToolResult(result) => {
+                            self.add_message(MessageRole::Agent, result);
+                        }
+                        InteractiveMessage::SystemMessage(msg) => {
+                            self.add_message(MessageRole::System, msg);
+                        }
+                        InteractiveMessage::TaskCompleted { success, summary } => {
+                            let status_icon = if success { "✅" } else { "❌" };
+                            self.add_message(MessageRole::System, format!("{} Task completed: {}", status_icon, summary));
+                        }
+                        InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
+                            let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
+                            if let Some(token_info) = tokens {
+                                stats.push_str(&format!("\n{}", token_info));
+                            }
+                            self.add_message(MessageRole::System, stats);
+                        }
+                    }
+                }
+                AppMessage::AgentExecutionStarted => {
+                    self.is_processing = true;
+                }
+                AppMessage::AgentExecutionCompleted { success: _ } => {
+                    self.is_processing = false;
                 }
                 AppMessage::Quit => {
                     // Handle quit
@@ -133,8 +237,13 @@ impl InteractiveApp {
 
 
 /// Interactive mode using iocraft
-pub async fn run_rich_interactive() -> Result<()> {
+pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
     println!("🎯 Starting Trae Agent Interactive Mode");
+
+    // Store config and project path in a static context for the UI
+    INTERACTIVE_CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = Some(InteractiveContext { config, project_path });
+    });
 
     // Run the iocraft-based UI
     tokio::task::spawn_blocking(|| {
@@ -147,8 +256,8 @@ pub async fn run_rich_interactive() -> Result<()> {
 }
 
 /// Main entry point for interactive mode
-pub async fn run_interactive() -> Result<()> {
-    run_rich_interactive().await
+pub async fn run_interactive(config: Config, project_path: PathBuf) -> Result<()> {
+    run_rich_interactive(config, project_path).await
 }
 
 /// TRAE ASCII Art Logo Component
@@ -185,6 +294,15 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let messages = hooks.use_state(|| Vec::<(String, String)>::new()); // (role, content)
     let is_processing = hooks.use_state(|| false);
     let should_exit = hooks.use_state(|| false);
+
+    // Get interactive context
+    let interactive_context = INTERACTIVE_CONTEXT.with(|ctx| ctx.borrow().clone());
+    let (config, project_path) = if let Some(ctx) = interactive_context {
+        (ctx.config, ctx.project_path)
+    } else {
+        // Fallback to default values
+        (Config::default(), PathBuf::from("."))
+    };
 
     // Handle terminal events
     hooks.use_terminal_events({
@@ -224,12 +342,27 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             // Set processing state
                             is_processing.set(true);
 
-                            // Simulate agent response (placeholder)
-                            let response = format!("I would help you with: {}", input);
-                            let mut current_messages = messages.read().clone();
-                            current_messages.push(("agent".to_string(), response));
-                            messages.set(current_messages);
-                            is_processing.set(false);
+                            // Execute agent task asynchronously
+                            let config_clone = config.clone();
+                            let project_path_clone = project_path.clone();
+                            let mut messages_clone = messages.clone();
+                            let mut is_processing_clone = is_processing.clone();
+
+                            tokio::spawn(async move {
+                                match execute_agent_task_simple(input, config_clone, project_path_clone).await {
+                                    Ok(response) => {
+                                        let mut current_messages = messages_clone.read().clone();
+                                        current_messages.push(("agent".to_string(), response));
+                                        messages_clone.set(current_messages);
+                                    }
+                                    Err(e) => {
+                                        let mut current_messages = messages_clone.read().clone();
+                                        current_messages.push(("system".to_string(), format!("❌ Error: {}", e)));
+                                        messages_clone.set(current_messages);
+                                    }
+                                }
+                                is_processing_clone.set(false);
+                            });
                         }
                     }
                     _ => {}
@@ -297,23 +430,37 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 None
             })
 
-            // Chat messages area - 简约版本，无边框，每条消息单独一行
+            // Chat messages area - 支持文本换行，防止UI错乱
             View(
                 flex_grow: 1.0,
                 margin_bottom: 1,
                 flex_direction: FlexDirection::Column,
             ) {
                 #(messages.read().iter().map(|(role, content)| {
+                    // 将长文本按行宽换行，防止自动换行导致UI错乱
+                    let wrapped_lines = wrap_text(content, 120); // 使用120字符作为行宽限制
+
                     if role == "user" {
                         element! {
                             View(
                                 width: 100pct,
                                 margin_bottom: 1,
+                                flex_direction: FlexDirection::Column,
                             ) {
-                                Text(
-                                    content: format!("> {}", content),
-                                    color: Color::White,
-                                )
+                                #(wrapped_lines.iter().enumerate().map(|(i, line)| {
+                                    element! {
+                                        View(width: 100pct) {
+                                            Text(
+                                                content: if i == 0 {
+                                                    format!("> {}", line)
+                                                } else {
+                                                    format!("  {}", line) // 续行缩进
+                                                },
+                                                color: Color::White,
+                                            )
+                                        }
+                                    }
+                                }))
                             }
                         }
                     } else {
@@ -321,11 +468,18 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             View(
                                 width: 100pct,
                                 margin_bottom: 1,
+                                flex_direction: FlexDirection::Column,
                             ) {
-                                Text(
-                                    content: content,
-                                    color: Color::White,
-                                )
+                                #(wrapped_lines.iter().map(|line| {
+                                    element! {
+                                        View(width: 100pct) {
+                                            Text(
+                                                content: line,
+                                                color: Color::White,
+                                            )
+                                        }
+                                    }
+                                }))
                             }
                         }
                     }
@@ -392,5 +546,73 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 )
             }
         }
+    }
+}
+
+/// Execute agent task asynchronously and send updates to UI
+async fn execute_agent_task(
+    task: String,
+    config: Config,
+    project_path: PathBuf,
+    ui_sender: mpsc::UnboundedSender<AppMessage>,
+) -> Result<()> {
+    // Create interactive output handler
+    let (interactive_sender, mut interactive_receiver) = mpsc::unbounded_channel();
+    let interactive_config = InteractiveOutputConfig::default();
+    let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, interactive_sender));
+
+    // Get agent configuration
+    let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
+
+    // Create agent with interactive output handler
+    let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
+
+    // Forward interactive messages to UI
+    let ui_sender_clone = ui_sender.clone();
+    tokio::spawn(async move {
+        while let Some(interactive_msg) = interactive_receiver.recv().await {
+            let _ = ui_sender_clone.send(AppMessage::InteractiveUpdate(interactive_msg));
+        }
+    });
+
+    // Execute the task
+    let _execution_result = agent.execute_task_with_context(&task, &project_path).await?;
+
+    Ok(())
+}
+
+/// Execute agent task and return simple response for UI
+async fn execute_agent_task_simple(
+    task: String,
+    config: Config,
+    project_path: PathBuf,
+) -> Result<String> {
+    // Create a dummy output handler that collects messages
+    let (dummy_sender, mut dummy_receiver) = mpsc::unbounded_channel();
+    let interactive_config = InteractiveOutputConfig::default();
+    let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, dummy_sender));
+
+    // Get agent configuration
+    let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
+
+    // Create agent with interactive output handler
+    let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
+
+    // Collect output messages in background
+    let mut _collected_messages: Vec<String> = Vec::new();
+    tokio::spawn(async move {
+        while let Some(_msg) = dummy_receiver.recv().await {
+            // For now, we'll just ignore the detailed messages and return a simple response
+        }
+    });
+
+    // Execute the task
+    let execution_result = agent.execute_task_with_context(&task, &project_path).await?;
+
+    // Return a simple success message
+    if execution_result.success {
+        Ok(format!("✅ Task completed successfully: {}", execution_result.final_result))
+    } else {
+        Ok(format!("❌ Task failed: {}", execution_result.final_result))
     }
 }
