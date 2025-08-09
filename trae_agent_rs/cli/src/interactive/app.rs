@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use trae_agent_core::{Config, agent::TraeAgent};
-use crate::output::interactive_handler::{InteractiveOutputHandler, InteractiveMessage, InteractiveOutputConfig};
+use crate::output::interactive_handler::InteractiveMessage;
 use std::cell::RefCell;
 
 /// Wrap text to fit within specified width, breaking at word boundaries
@@ -345,23 +345,24 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             // Execute agent task asynchronously
                             let config_clone = config.clone();
                             let project_path_clone = project_path.clone();
-                            let mut messages_clone = messages.clone();
-                            let mut is_processing_clone = is_processing.clone();
+
+                            // Create a dummy channel since execute_agent_task expects it
+                            let (ui_sender, _ui_receiver) = mpsc::unbounded_channel();
 
                             tokio::spawn(async move {
-                                match execute_agent_task_simple(input, config_clone, project_path_clone).await {
-                                    Ok(response) => {
-                                        let mut current_messages = messages_clone.read().clone();
-                                        current_messages.push(("agent".to_string(), response));
-                                        messages_clone.set(current_messages);
+                                match execute_agent_task(input, config_clone, project_path_clone, ui_sender.clone()).await {
+                                    Ok(_) => {
+                                        // Task completed successfully - CLI output handler already showed the results
+                                        is_processing.set(false);
                                     }
                                     Err(e) => {
-                                        let mut current_messages = messages_clone.read().clone();
+                                        // Show error in UI
+                                        let mut current_messages = messages.read().clone();
                                         current_messages.push(("system".to_string(), format!("❌ Error: {}", e)));
-                                        messages_clone.set(current_messages);
+                                        messages.set(current_messages);
+                                        is_processing.set(false);
                                     }
                                 }
-                                is_processing_clone.set(false);
                             });
                         }
                     }
@@ -554,26 +555,26 @@ async fn execute_agent_task(
     task: String,
     config: Config,
     project_path: PathBuf,
-    ui_sender: mpsc::UnboundedSender<AppMessage>,
+    _ui_sender: mpsc::UnboundedSender<AppMessage>,
 ) -> Result<()> {
-    // Create interactive output handler
-    let (interactive_sender, mut interactive_receiver) = mpsc::unbounded_channel();
-    let interactive_config = InteractiveOutputConfig::default();
-    let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, interactive_sender));
+    // Use InteractiveOutputHandler which delegates to CliOutputHandler
+    use crate::output::interactive_handler::{InteractiveOutputHandler, InteractiveOutputConfig};
 
     // Get agent configuration
     let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
 
-    // Create agent with interactive output handler
-    let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
+    // Create a dummy channel for InteractiveMessage (not used since we delegate to CLI)
+    let (interactive_sender, _interactive_receiver) = mpsc::unbounded_channel();
 
-    // Forward interactive messages to UI
-    let ui_sender_clone = ui_sender.clone();
-    tokio::spawn(async move {
-        while let Some(interactive_msg) = interactive_receiver.recv().await {
-            let _ = ui_sender_clone.send(AppMessage::InteractiveUpdate(interactive_msg));
-        }
-    });
+    // Create InteractiveOutputHandler with default config (delegates to CLI)
+    let interactive_config = InteractiveOutputConfig {
+        realtime_updates: true, // Always enable realtime updates for better UX
+        show_tool_details: true,
+    };
+    let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, interactive_sender));
+
+    // Create agent with InteractiveOutputHandler (which delegates to CLI)
+    let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
 
     // Execute the task
     let _execution_result = agent.execute_task_with_context(&task, &project_path).await?;
@@ -581,38 +582,4 @@ async fn execute_agent_task(
     Ok(())
 }
 
-/// Execute agent task and return simple response for UI
-async fn execute_agent_task_simple(
-    task: String,
-    config: Config,
-    project_path: PathBuf,
-) -> Result<String> {
-    // Create a dummy output handler that collects messages
-    let (dummy_sender, mut dummy_receiver) = mpsc::unbounded_channel();
-    let interactive_config = InteractiveOutputConfig::default();
-    let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, dummy_sender));
 
-    // Get agent configuration
-    let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
-
-    // Create agent with interactive output handler
-    let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
-
-    // Collect output messages in background
-    let mut _collected_messages: Vec<String> = Vec::new();
-    tokio::spawn(async move {
-        while let Some(_msg) = dummy_receiver.recv().await {
-            // For now, we'll just ignore the detailed messages and return a simple response
-        }
-    });
-
-    // Execute the task
-    let execution_result = agent.execute_task_with_context(&task, &project_path).await?;
-
-    // Return a simple success message
-    if execution_result.success {
-        Ok(format!("✅ Task completed successfully: {}", execution_result.final_result))
-    } else {
-        Ok(format!("❌ Task failed: {}", execution_result.final_result))
-    }
-}
