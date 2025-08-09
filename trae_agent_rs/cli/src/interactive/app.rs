@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use trae_agent_core::{Config, agent::TraeAgent};
 use crate::output::interactive_handler::InteractiveMessage;
-use std::cell::RefCell;
+use std::sync::OnceLock;
 
 /// Wrap text to fit within specified width, breaking at word boundaries
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
@@ -52,10 +52,8 @@ struct InteractiveContext {
     project_path: PathBuf,
 }
 
-/// Thread-local storage for interactive context
-thread_local! {
-    static INTERACTIVE_CONTEXT: RefCell<Option<InteractiveContext>> = RefCell::new(None);
-}
+/// Global storage for interactive context accessible across threads
+static INTERACTIVE_CONTEXT: OnceLock<InteractiveContext> = OnceLock::new();
 
 /// Message types for the interactive app
 #[derive(Debug, Clone)]
@@ -69,13 +67,11 @@ pub enum AppMessage {
 
 /// Get interactive context with fallback to defaults
 fn get_interactive_context() -> (Config, PathBuf) {
-    INTERACTIVE_CONTEXT.with(|ctx| {
-        if let Some(ctx) = ctx.borrow().clone() {
-            (ctx.config, ctx.project_path)
-        } else {
-            (Config::default(), PathBuf::from("."))
-        }
-    })
+    if let Some(ctx) = INTERACTIVE_CONTEXT.get() {
+        (ctx.config.clone(), ctx.project_path.clone())
+    } else {
+        (Config::default(), PathBuf::from("."))
+    }
 }
 
 /// Convert AppMessage to UI message tuple (role, content)
@@ -155,10 +151,8 @@ fn spawn_ui_agent_task(
 pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
     println!("🎯 Starting Trae Agent Interactive Mode");
 
-    // Store config and project path in a static context for the UI
-    INTERACTIVE_CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = Some(InteractiveContext { config, project_path });
-    });
+    // Store config and project path in a global context for the UI (accessible across threads)
+    let _ = INTERACTIVE_CONTEXT.set(InteractiveContext { config, project_path });
 
     // Run the iocraft-based UI
     tokio::task::spawn_blocking(|| {
