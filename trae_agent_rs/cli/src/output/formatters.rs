@@ -10,6 +10,7 @@ const GRAY: &str = "\x1b[90m";      // Gray text for line numbers
 const WHITE: &str = "\x1b[97m";     // White text for executing status
 const GREEN: &str = "\x1b[92m";     // Green text for success status
 const RED: &str = "\x1b[91m";       // Red text for error status
+const BLACK: &str = "\x1b[30m";     // Black text for better contrast on colored backgrounds
 const RESET: &str = "\x1b[0m";
 
 /// Tool execution formatter
@@ -27,11 +28,51 @@ impl ToolFormatter {
             ToolExecutionStatus::Success => (GREEN, "⏺"),
             ToolExecutionStatus::Error => (RED, "⏺"),
         };
-        
-        // Extract command or main parameter for display
+
+        // Get friendly display name and command
+        let display_name = self.get_tool_display_name(tool_info);
         let command = self.extract_tool_command(tool_info);
-        
-        format!("{}{}{} {}({})", dot_color, dot_char, RESET, tool_info.tool_name, command)
+
+        if command.is_empty() {
+            format!("{}{}{} {}", dot_color, dot_char, RESET, display_name)
+        } else {
+            format!("{}{}{} {}({})", dot_color, dot_char, RESET, display_name, command)
+        }
+    }
+
+    /// Get friendly display name for tools
+    fn get_tool_display_name(&self, tool_info: &ToolExecutionInfo) -> String {
+        match tool_info.tool_name.as_str() {
+            "bash" => "Bash".to_string(),
+            "str_replace_based_edit_tool" => {
+                // Determine operation type based on parameters
+                if tool_info.parameters.contains_key("file_text") {
+                    "Create".to_string()
+                } else if tool_info.parameters.contains_key("old_str") {
+                    "Update".to_string()
+                } else if tool_info.parameters.contains_key("view_range") ||
+                         tool_info.parameters.get("command").and_then(|v| v.as_str()) == Some("view") {
+                    "Read".to_string()
+                } else {
+                    "Edit".to_string()
+                }
+            }
+            "task_done" => "Complete".to_string(),
+            "sequentialthinking" => "Think".to_string(),
+            _ => {
+                // For unknown tools, capitalize the first letter
+                let name = tool_info.tool_name.as_str();
+                if name.is_empty() {
+                    "Tool".to_string()
+                } else {
+                    let mut chars = name.chars();
+                    match chars.next() {
+                        None => "Tool".to_string(),
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                }
+            }
+        }
     }
     
     /// Extract the main command/parameter from tool info for display
@@ -73,30 +114,50 @@ impl ToolFormatter {
     /// Format tool result content for display
     pub fn format_tool_result(&self, tool_info: &ToolExecutionInfo) -> Option<String> {
         let result = tool_info.result.as_ref()?;
-        
+
         match tool_info.tool_name.as_str() {
             "bash" => {
+                // For bash commands, show the output directly without prefix
                 if !result.content.trim().is_empty() {
                     let display_content = if result.content.len() > 200 {
                         format!("{}...", &result.content[..197])
                     } else {
                         result.content.clone()
                     };
-                    Some(format!("  ⎿  {}", display_content))
+                    Some(display_content)
                 } else {
                     None
                 }
             }
             "str_replace_based_edit_tool" => {
-                // Simple success/error message - detailed diff is handled separately
-                if result.success {
-                    Some("  ⎿  File updated successfully".to_string())
-                } else {
+                // Determine operation type and show appropriate message
+                if !result.success {
                     Some(format!("  ⎿  Error: {}", result.content))
+                } else {
+                    // Check operation type based on parameters
+                    if tool_info.parameters.contains_key("file_text") {
+                        // Create operation
+                        None // Diff view will be shown separately
+                    } else if tool_info.parameters.contains_key("old_str") {
+                        // Update operation - no message needed, diff view will be shown
+                        None
+                    } else if tool_info.parameters.contains_key("view_range") ||
+                             tool_info.parameters.get("command").and_then(|v| v.as_str()) == Some("view") {
+                        // Read operation - show line count
+                        let line_count = result.content.lines().count();
+                        Some(format!("  ⎿  Read {} lines", line_count))
+                    } else {
+                        // Other edit operations
+                        Some("  ⎿  File updated successfully".to_string())
+                    }
                 }
             }
             "task_done" => {
                 Some(format!("  ⎿  {}", result.content))
+            }
+            "sequentialthinking" => {
+                // Thinking tool - no result message needed, thinking is shown separately
+                None
             }
             _ => {
                 if !result.content.trim().is_empty() {
@@ -201,7 +262,8 @@ impl DiffFormatter {
     fn format_line_with_background_and_prefix(&self, line: &str, bg_color: &str, prefix: &str) -> String {
         let truncated = self.truncate_line(line);
         let content_with_prefix = format!("{} {}", prefix, truncated);
-        format!("{}{:<100}{}", bg_color, content_with_prefix, RESET)
+        // Use black text on colored background for better contrast
+        format!("{}{}{:<100}{}", bg_color, BLACK, content_with_prefix, RESET)
     }
     
     /// Truncate line if too long
