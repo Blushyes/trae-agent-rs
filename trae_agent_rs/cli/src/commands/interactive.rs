@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing::{info, debug};
-use crate::interactive::app::run_interactive;
+use crate::interactive::app::run_rich_interactive;
 use trae_agent_core::Config;
 
 /// Start interactive mode
@@ -40,5 +40,5 @@ pub async fn interactive_command(
     debug!("📁 Project path: {}", project_path.display());
 
     // Run the interactive mode (always use rich mode)
-    run_interactive(config, project_path).await
+    run_rich_interactive(config, project_path).await
 }

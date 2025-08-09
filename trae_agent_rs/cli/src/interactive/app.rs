@@ -255,10 +255,7 @@ pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Resu
     Ok(())
 }
 
-/// Main entry point for interactive mode
-pub async fn run_interactive(config: Config, project_path: PathBuf) -> Result<()> {
-    run_rich_interactive(config, project_path).await
-}
+
 
 /// TRAE ASCII Art Logo Component
 #[component]
