@@ -10,6 +10,16 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn, error};
 
+/// Tools that should not display status indicators
+static SILENT_TOOLS: &[&str] = &[
+    "sequentialthinking",
+];
+
+/// Check if a tool should be silent (no status display)
+fn is_silent_tool(tool_name: &str) -> bool {
+    SILENT_TOOLS.contains(&tool_name)
+}
+
 /// CLI output configuration
 #[derive(Debug, Clone)]
 pub struct CliOutputConfig {
@@ -144,8 +154,11 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::ToolExecutionStarted { tool_info } => {
-                // Show executing status (white dot)
-                println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                // Skip status display for silent tools
+                if !is_silent_tool(&tool_info.tool_name) {
+                    // Show executing status (white dot)
+                    println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                }
                 // Always track tools for potential updates
                 let mut active_tools = self.active_tools.lock().await;
                 active_tools.insert(tool_info.execution_id.clone(), tool_info);
@@ -156,6 +169,11 @@ impl AgentOutput for CliOutputHandler {
             }
 
             AgentEvent::ToolExecutionCompleted { tool_info } => {
+                // Skip all output for silent tools - their content is handled separately
+                if is_silent_tool(&tool_info.tool_name) {
+                    return Ok(());
+                }
+
                 let mut active_tools = self.active_tools.lock().await;
 
                 if active_tools.contains_key(&tool_info.execution_id) {
@@ -189,9 +207,8 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::AgentThinking { step_number: _, thinking } => {
-                debug!("💭 Thinking: {}", thinking);
-                // In normal mode, show thinking directly without prefix
-                println!("{}", thinking);
+                // In normal mode, show thinking in gray color without prefix
+                println!("\x1b[90m{}\x1b[0m", thinking);
             }
             
             AgentEvent::Message { level, content, metadata: _ } => {
