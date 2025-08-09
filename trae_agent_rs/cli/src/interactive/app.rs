@@ -346,21 +346,80 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             let config_clone = config.clone();
                             let project_path_clone = project_path.clone();
 
-                            // Create a dummy channel since execute_agent_task expects it
-                            let (ui_sender, _ui_receiver) = mpsc::unbounded_channel();
+                            // Create a channel for UI updates
+                            let (ui_sender, mut ui_receiver) = mpsc::unbounded_channel();
+
+                            // Forward UI messages to the component state
+                            let mut messages_clone_for_receiver = messages.clone();
+                            let mut is_processing_clone_for_receiver = is_processing.clone();
+                            tokio::spawn(async move {
+                                while let Some(app_message) = ui_receiver.recv().await {
+                                    match app_message {
+                                        AppMessage::AgentResponse(response) => {
+                                            let mut current_messages = messages_clone_for_receiver.read().clone();
+                                            current_messages.push(("agent".to_string(), response));
+                                            messages_clone_for_receiver.set(current_messages);
+                                        }
+                                        AppMessage::SystemMessage(msg) => {
+                                            let mut current_messages = messages_clone_for_receiver.read().clone();
+                                            current_messages.push(("system".to_string(), msg));
+                                            messages_clone_for_receiver.set(current_messages);
+                                        }
+                                        AppMessage::InteractiveUpdate(interactive_msg) => {
+                                            match interactive_msg {
+                                                InteractiveMessage::AgentThinking(thinking) => {
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("agent".to_string(), thinking));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                                InteractiveMessage::ToolStatus(status) => {
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("system".to_string(), status));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                                InteractiveMessage::ToolResult(result) => {
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("agent".to_string(), result));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                                InteractiveMessage::SystemMessage(msg) => {
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("system".to_string(), msg));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                                InteractiveMessage::TaskCompleted { success, summary } => {
+                                                    let status_icon = if success { "✅" } else { "❌" };
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("system".to_string(), format!("{} Task completed: {}", status_icon, summary)));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                                InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
+                                                    let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
+                                                    if let Some(token_info) = tokens {
+                                                        stats.push_str(&format!("\n{}", token_info));
+                                                    }
+                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
+                                                    current_messages.push(("system".to_string(), stats));
+                                                    messages_clone_for_receiver.set(current_messages);
+                                                }
+                                            }
+                                        }
+                                        AppMessage::AgentExecutionCompleted { success: _ } => {
+                                            is_processing_clone_for_receiver.set(false);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
 
                             tokio::spawn(async move {
                                 match execute_agent_task(input, config_clone, project_path_clone, ui_sender.clone()).await {
                                     Ok(_) => {
-                                        // Task completed successfully - CLI output handler already showed the results
-                                        is_processing.set(false);
+                                        let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: true });
                                     }
                                     Err(e) => {
-                                        // Show error in UI
-                                        let mut current_messages = messages.read().clone();
-                                        current_messages.push(("system".to_string(), format!("❌ Error: {}", e)));
-                                        messages.set(current_messages);
-                                        is_processing.set(false);
+                                        let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
+                                        let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: false });
                                     }
                                 }
                             });
@@ -555,25 +614,33 @@ async fn execute_agent_task(
     task: String,
     config: Config,
     project_path: PathBuf,
-    _ui_sender: mpsc::UnboundedSender<AppMessage>,
+    ui_sender: mpsc::UnboundedSender<AppMessage>,
 ) -> Result<()> {
-    // Use InteractiveOutputHandler which delegates to CliOutputHandler
+    // Use InteractiveOutputHandler which delegates to CliOutputHandler and sends UI messages
     use crate::output::interactive_handler::{InteractiveOutputHandler, InteractiveOutputConfig};
 
     // Get agent configuration
     let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
 
-    // Create a dummy channel for InteractiveMessage (not used since we delegate to CLI)
-    let (interactive_sender, _interactive_receiver) = mpsc::unbounded_channel();
+    // Create channel for InteractiveMessage and forward to AppMessage
+    let (interactive_sender, mut interactive_receiver) = mpsc::unbounded_channel();
 
-    // Create InteractiveOutputHandler with default config (delegates to CLI)
+    // Forward InteractiveMessage to AppMessage
+    let ui_sender_clone = ui_sender.clone();
+    tokio::spawn(async move {
+        while let Some(interactive_msg) = interactive_receiver.recv().await {
+            let _ = ui_sender_clone.send(AppMessage::InteractiveUpdate(interactive_msg));
+        }
+    });
+
+    // Create InteractiveOutputHandler with UI integration
     let interactive_config = InteractiveOutputConfig {
         realtime_updates: true, // Always enable realtime updates for better UX
         show_tool_details: true,
     };
     let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, interactive_sender));
 
-    // Create agent with InteractiveOutputHandler (which delegates to CLI)
+    // Create agent with InteractiveOutputHandler
     let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
 
     // Execute the task
