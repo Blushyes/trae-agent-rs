@@ -2,8 +2,6 @@
 
 use anyhow::Result;
 use iocraft::prelude::*;
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use trae_agent_core::{Config, agent::TraeAgent};
@@ -12,7 +10,7 @@ use std::cell::RefCell;
 
 /// Wrap text to fit within specified width, breaking at word boundaries
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
         if line.len() <= max_width {
@@ -62,179 +60,84 @@ thread_local! {
 /// Message types for the interactive app
 #[derive(Debug, Clone)]
 pub enum AppMessage {
-    UserInput(String),
-    AgentResponse(String),
     SystemMessage(String),
     InteractiveUpdate(InteractiveMessage),
-    AgentExecutionStarted,
     AgentExecutionCompleted { success: bool },
-    Quit,
 }
 
-/// Chat message for display
-#[derive(Debug, Clone)]
-pub struct ChatMessage {
-    pub role: MessageRole,
-    pub content: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+
+
+/// Convert AppMessage to UI message tuple (role, content)
+fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String)> {
+    match app_message {
+        AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg)),
+        AppMessage::InteractiveUpdate(interactive_msg) => {
+            match interactive_msg {
+                InteractiveMessage::AgentThinking(thinking) => Some(("agent".to_string(), thinking)),
+                InteractiveMessage::ToolStatus(status) => Some(("system".to_string(), status)),
+                InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result)),
+                InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg)),
+                InteractiveMessage::TaskCompleted { success, summary } => {
+                    let status_icon = if success { "✅" } else { "❌" };
+                    Some(("system".to_string(), format!("{} Task completed: {}", status_icon, summary)))
+                }
+                InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
+                    let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
+                    if let Some(token_info) = tokens {
+                        stats.push_str(&format!("\n{}", token_info));
+                    }
+                    Some(("system".to_string(), stats))
+                }
+            }
+        }
+        AppMessage::AgentExecutionCompleted { success: _ } => None,
+    }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum MessageRole {
-    User,
-    Agent,
-    System,
-}
-
-/// Interactive chat application state
-pub struct InteractiveApp {
-    messages: Arc<Mutex<VecDeque<ChatMessage>>>,
-    input_buffer: String,
-    is_processing: bool,
-    sender: mpsc::UnboundedSender<AppMessage>,
-    receiver: Arc<Mutex<mpsc::UnboundedReceiver<AppMessage>>>,
+/// Spawn agent task execution for UI components
+fn spawn_ui_agent_task(
+    input: String,
     config: Config,
     project_path: PathBuf,
+    messages: iocraft::hooks::State<Vec<(String, String)>>,
+    is_processing: iocraft::hooks::State<bool>,
+) {
+    // Create a channel for UI updates
+    let (ui_sender, mut ui_receiver) = mpsc::unbounded_channel();
+
+    // Forward UI messages to the component state
+    let mut messages_for_receiver = messages.clone();
+    let mut is_processing_for_receiver = is_processing.clone();
+    tokio::spawn(async move {
+        while let Some(app_message) = ui_receiver.recv().await {
+            // Handle processing state changes
+            if matches!(app_message, AppMessage::AgentExecutionCompleted { .. }) {
+                is_processing_for_receiver.set(false);
+                continue;
+            }
+
+            // Convert and add message if applicable
+            if let Some((role, content)) = app_message_to_ui_message(app_message) {
+                let mut current_messages = messages_for_receiver.read().clone();
+                current_messages.push((role, content));
+                messages_for_receiver.set(current_messages);
+            }
+        }
+    });
+
+    // Execute agent task
+    tokio::spawn(async move {
+        match execute_agent_task(input, config, project_path, ui_sender.clone()).await {
+            Ok(_) => {
+                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: true });
+            }
+            Err(e) => {
+                let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
+                let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: false });
+            }
+        }
+    });
 }
-
-impl InteractiveApp {
-    /// Create a new interactive app
-    pub fn new(config: Config, project_path: PathBuf) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
-
-        Self {
-            messages: Arc::new(Mutex::new(VecDeque::new())),
-            input_buffer: String::new(),
-            is_processing: false,
-            sender,
-            receiver: Arc::new(Mutex::new(receiver)),
-            config,
-            project_path,
-        }
-    }
-    
-    /// Add a message to the chat
-    pub fn add_message(&mut self, role: MessageRole, content: String) {
-        let message = ChatMessage {
-            role,
-            content,
-            timestamp: chrono::Utc::now(),
-        };
-        
-        if let Ok(mut messages) = self.messages.lock() {
-            messages.push_back(message);
-            
-            // Keep only the last 100 messages
-            if messages.len() > 100 {
-                messages.pop_front();
-            }
-        }
-    }
-    
-    /// Get the message sender
-    pub fn sender(&self) -> mpsc::UnboundedSender<AppMessage> {
-        self.sender.clone()
-    }
-    
-    /// Process incoming messages
-    pub fn process_messages(&mut self) {
-        let messages = if let Ok(mut receiver) = self.receiver.try_lock() {
-            let mut collected_messages = Vec::new();
-            while let Ok(message) = receiver.try_recv() {
-                collected_messages.push(message);
-            }
-            collected_messages
-        } else {
-            Vec::new()
-        };
-
-        for message in messages {
-            match message {
-                AppMessage::UserInput(input) => {
-                    self.add_message(MessageRole::User, input.clone());
-                    self.is_processing = true;
-
-                    // Start agent execution asynchronously
-                    let sender = self.sender.clone();
-                    let config = self.config.clone();
-                    let project_path = self.project_path.clone();
-
-                    tokio::spawn(async move {
-                        let _ = sender.send(AppMessage::AgentExecutionStarted);
-
-                        match execute_agent_task(input, config, project_path, sender.clone()).await {
-                            Ok(_) => {
-                                let _ = sender.send(AppMessage::AgentExecutionCompleted { success: true });
-                            }
-                            Err(e) => {
-                                let _ = sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
-                                let _ = sender.send(AppMessage::AgentExecutionCompleted { success: false });
-                            }
-                        }
-                    });
-                }
-                AppMessage::AgentResponse(response) => {
-                    self.add_message(MessageRole::Agent, response);
-                }
-                AppMessage::SystemMessage(msg) => {
-                    self.add_message(MessageRole::System, msg);
-                }
-                AppMessage::InteractiveUpdate(interactive_msg) => {
-                    match interactive_msg {
-                        InteractiveMessage::AgentThinking(thinking) => {
-                            self.add_message(MessageRole::Agent, thinking);
-                        }
-                        InteractiveMessage::ToolStatus(status) => {
-                            self.add_message(MessageRole::System, status);
-                        }
-                        InteractiveMessage::ToolResult(result) => {
-                            self.add_message(MessageRole::Agent, result);
-                        }
-                        InteractiveMessage::SystemMessage(msg) => {
-                            self.add_message(MessageRole::System, msg);
-                        }
-                        InteractiveMessage::TaskCompleted { success, summary } => {
-                            let status_icon = if success { "✅" } else { "❌" };
-                            self.add_message(MessageRole::System, format!("{} Task completed: {}", status_icon, summary));
-                        }
-                        InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
-                            let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
-                            if let Some(token_info) = tokens {
-                                stats.push_str(&format!("\n{}", token_info));
-                            }
-                            self.add_message(MessageRole::System, stats);
-                        }
-                    }
-                }
-                AppMessage::AgentExecutionStarted => {
-                    self.is_processing = true;
-                }
-                AppMessage::AgentExecutionCompleted { success: _ } => {
-                    self.is_processing = false;
-                }
-                AppMessage::Quit => {
-                    // Handle quit
-                }
-            }
-        }
-    }
-    
-    /// Handle user input
-    pub fn handle_input(&mut self, input: String) {
-        if input.trim().is_empty() {
-            return;
-        }
-        
-        if input.trim() == "exit" || input.trim() == "quit" {
-            let _ = self.sender.send(AppMessage::Quit);
-            return;
-        }
-        
-        let _ = self.sender.send(AppMessage::UserInput(input));
-    }
-}
-
-
 
 /// Interactive mode using iocraft
 pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
@@ -327,100 +230,21 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     }
                     KeyCode::Enter => {
                         let input = input_value.read().clone();
-                        if !input.trim().is_empty() {
-                            // Add user message
-                            let mut current_messages = messages.read().clone();
-                            current_messages.push(("user".to_string(), input.clone()));
-                            messages.set(current_messages);
-
-                            // Clear input
-                            input_value.set(String::new());
-
-                            // Set processing state
-                            is_processing.set(true);
-
-                            // Execute agent task asynchronously
-                            let config_clone = config.clone();
-                            let project_path_clone = project_path.clone();
-
-                            // Create a channel for UI updates
-                            let (ui_sender, mut ui_receiver) = mpsc::unbounded_channel();
-
-                            // Forward UI messages to the component state
-                            let mut messages_clone_for_receiver = messages.clone();
-                            let mut is_processing_clone_for_receiver = is_processing.clone();
-                            tokio::spawn(async move {
-                                while let Some(app_message) = ui_receiver.recv().await {
-                                    match app_message {
-                                        AppMessage::AgentResponse(response) => {
-                                            let mut current_messages = messages_clone_for_receiver.read().clone();
-                                            current_messages.push(("agent".to_string(), response));
-                                            messages_clone_for_receiver.set(current_messages);
-                                        }
-                                        AppMessage::SystemMessage(msg) => {
-                                            let mut current_messages = messages_clone_for_receiver.read().clone();
-                                            current_messages.push(("system".to_string(), msg));
-                                            messages_clone_for_receiver.set(current_messages);
-                                        }
-                                        AppMessage::InteractiveUpdate(interactive_msg) => {
-                                            match interactive_msg {
-                                                InteractiveMessage::AgentThinking(thinking) => {
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("agent".to_string(), thinking));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                                InteractiveMessage::ToolStatus(status) => {
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("system".to_string(), status));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                                InteractiveMessage::ToolResult(result) => {
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("agent".to_string(), result));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                                InteractiveMessage::SystemMessage(msg) => {
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("system".to_string(), msg));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                                InteractiveMessage::TaskCompleted { success, summary } => {
-                                                    let status_icon = if success { "✅" } else { "❌" };
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("system".to_string(), format!("{} Task completed: {}", status_icon, summary)));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                                InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
-                                                    let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
-                                                    if let Some(token_info) = tokens {
-                                                        stats.push_str(&format!("\n{}", token_info));
-                                                    }
-                                                    let mut current_messages = messages_clone_for_receiver.read().clone();
-                                                    current_messages.push(("system".to_string(), stats));
-                                                    messages_clone_for_receiver.set(current_messages);
-                                                }
-                                            }
-                                        }
-                                        AppMessage::AgentExecutionCompleted { success: _ } => {
-                                            is_processing_clone_for_receiver.set(false);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            });
-
-                            tokio::spawn(async move {
-                                match execute_agent_task(input, config_clone, project_path_clone, ui_sender.clone()).await {
-                                    Ok(_) => {
-                                        let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: true });
-                                    }
-                                    Err(e) => {
-                                        let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
-                                        let _ = ui_sender.send(AppMessage::AgentExecutionCompleted { success: false });
-                                    }
-                                }
-                            });
+                        if input.trim().is_empty() {
+                            return;
                         }
+
+                        // Add user message
+                        let mut current_messages = messages.read().clone();
+                        current_messages.push(("user".to_string(), input.clone()));
+                        messages.set(current_messages);
+
+                        // Clear input and set processing state
+                        input_value.set(String::new());
+                        is_processing.set(true);
+
+                        // Execute agent task asynchronously
+                        spawn_ui_agent_task(input, config.clone(), project_path.clone(), messages.clone(), is_processing.clone());
                     }
                     _ => {}
                 }
@@ -439,43 +263,31 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             height: 100pct,
             padding: 1,
         ) {
-            // Header with TRAE logo
-            #(if messages.read().is_empty() {
-                Some(element! {
-                    View(margin_bottom: 2) {
-                        TraeLogo
-                    }
-                })
-            } else {
-                None
-            })
-
-            // Tips section
+            // Header with TRAE logo and tips (only show when no messages)
             #(if messages.read().is_empty() {
                 Some(element! {
                     View(
                         margin_bottom: 2,
                         flex_direction: FlexDirection::Column,
                     ) {
-                        View() {
+                        View(margin_bottom: 2) {
+                            TraeLogo
+                        }
+                        View(
+                            flex_direction: FlexDirection::Column,
+                        ) {
                             Text(
                                 content: "Tips for getting started:",
                                 color: Color::White,
                             )
-                        }
-                        View() {
                             Text(
                                 content: "1. Ask questions, edit files, or run commands.",
                                 color: Color::White,
                             )
-                        }
-                        View() {
                             Text(
                                 content: "2. Be specific for the best results.",
                                 color: Color::White,
                             )
-                        }
-                        View() {
                             Text(
                                 content: "3. /help for more information.",
                                 color: Color::White,
@@ -544,18 +356,14 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             }
 
             // Processing indicator
-            #(if is_processing.get() {
-                Some(element! {
-                    View(margin_bottom: 1) {
-                        Text(
-                            content: "ℹ Processing...",
-                            color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色信息提示
-                        )
-                    }
-                })
-            } else {
-                None
-            })
+            #(is_processing.get().then(|| element! {
+                View(margin_bottom: 1) {
+                    Text(
+                        content: "ℹ Processing...",
+                        color: Color::Rgb { r: 100, g: 149, b: 237 },
+                    )
+                }
+            }))
 
             // Input area - 简约边框风格，单行高度
             View(
@@ -613,7 +421,6 @@ async fn execute_agent_task(
     project_path: PathBuf,
     ui_sender: mpsc::UnboundedSender<AppMessage>,
 ) -> Result<()> {
-    // Use InteractiveOutputHandler which delegates to CliOutputHandler and sends UI messages
     use crate::output::interactive_handler::{InteractiveOutputHandler, InteractiveOutputConfig};
 
     // Get agent configuration
@@ -623,25 +430,22 @@ async fn execute_agent_task(
     let (interactive_sender, mut interactive_receiver) = mpsc::unbounded_channel();
 
     // Forward InteractiveMessage to AppMessage
-    let ui_sender_clone = ui_sender.clone();
     tokio::spawn(async move {
         while let Some(interactive_msg) = interactive_receiver.recv().await {
-            let _ = ui_sender_clone.send(AppMessage::InteractiveUpdate(interactive_msg));
+            let _ = ui_sender.send(AppMessage::InteractiveUpdate(interactive_msg));
         }
     });
 
     // Create InteractiveOutputHandler with UI integration
     let interactive_config = InteractiveOutputConfig {
-        realtime_updates: true, // Always enable realtime updates for better UX
+        realtime_updates: true,
         show_tool_details: true,
     };
     let interactive_output = Box::new(InteractiveOutputHandler::new(interactive_config, interactive_sender));
 
-    // Create agent with InteractiveOutputHandler
+    // Create and execute agent task
     let mut agent = TraeAgent::new_with_output(agent_config, config, interactive_output).await?;
-
-    // Execute the task
-    let _execution_result = agent.execute_task_with_context(&task, &project_path).await?;
+    agent.execute_task_with_context(&task, &project_path).await?;
 
     Ok(())
 }
