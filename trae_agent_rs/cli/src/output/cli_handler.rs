@@ -159,12 +159,11 @@ impl AgentOutput for CliOutputHandler {
             }
             
             AgentEvent::ToolExecutionStarted { tool_info } => {
-                // Always show executing status (white dot)
+                // Show executing status (white dot)
                 println!("{}", self.tool_formatter.format_tool_status(&tool_info));
-                if self.config.realtime_updates {
-                    let mut active_tools = self.active_tools.lock().await;
-                    active_tools.insert(tool_info.execution_id.clone(), tool_info);
-                }
+                // Always track tools for potential updates
+                let mut active_tools = self.active_tools.lock().await;
+                active_tools.insert(tool_info.execution_id.clone(), tool_info);
             }
 
             AgentEvent::ToolExecutionUpdated { tool_info } => {
@@ -172,51 +171,34 @@ impl AgentOutput for CliOutputHandler {
             }
 
             AgentEvent::ToolExecutionCompleted { tool_info } => {
-                if self.config.realtime_updates {
-                    // Real-time mode: update the existing line
-                    let mut active_tools = self.active_tools.lock().await;
-                    if active_tools.contains_key(&tool_info.execution_id) {
-                        // Clear current line and move cursor up to overwrite the executing line
-                        use std::io::Write;
-                        // Move up one line, clear the line, and return to beginning
-                        print!("\x1b[F\x1b[2K");
-                        std::io::stdout().flush().unwrap_or(());
-                        println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                let mut active_tools = self.active_tools.lock().await;
 
-                        // Show result content if available
-                        if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
-                            println!("{}", result_display);
-                        }
+                if active_tools.contains_key(&tool_info.execution_id) {
+                    // Tool was tracked, try to update the existing line
+                    use std::io::Write;
+                    // Try a different approach: move up and clear
+                    print!("\x1b[1A\x1b[2K\r");
+                    std::io::stdout().flush().unwrap_or(());
 
-                        // Show diff for edit tools
-                        if tool_info.tool_name == "str_replace_based_edit_tool" {
-                            if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
-                                println!("{}", diff_display);
-                            }
-                        }
-
-                        active_tools.remove(&tool_info.execution_id);
-                    } else {
-                        // Tool wasn't tracked, just show the final status
-                        println!("{}", self.tool_formatter.format_tool_status(&tool_info));
-                        if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
-                            println!("{}", result_display);
-                        }
-                    }
+                    active_tools.remove(&tool_info.execution_id);
                 } else {
-                    // Non-real-time mode: show completion status and results
-                    println!("{}", self.tool_formatter.format_tool_status(&tool_info));
+                    // Tool wasn't tracked, this shouldn't happen but handle gracefully
+                    // Don't print anything to avoid duplicates
+                    return Ok(());
+                }
 
-                    // Show result content if available
-                    if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
-                        println!("{}", result_display);
-                    }
+                // Always show the final status (green/red dot)
+                println!("{}", self.tool_formatter.format_tool_status(&tool_info));
 
-                    // Show diff for edit tools
-                    if tool_info.tool_name == "str_replace_based_edit_tool" {
-                        if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
-                            println!("{}", diff_display);
-                        }
+                // Show result content if available
+                if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
+                    println!("{}", result_display);
+                }
+
+                // Show diff for edit tools
+                if tool_info.tool_name == "str_replace_based_edit_tool" {
+                    if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
+                        println!("{}", diff_display);
                     }
                 }
             }

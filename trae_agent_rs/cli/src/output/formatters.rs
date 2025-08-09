@@ -77,7 +77,7 @@ impl ToolFormatter {
     
     /// Extract the main command/parameter from tool info for display
     fn extract_tool_command(&self, tool_info: &ToolExecutionInfo) -> String {
-        match tool_info.tool_name.as_str() {
+        let command = match tool_info.tool_name.as_str() {
             "bash" => {
                 tool_info.parameters
                     .get("command")
@@ -108,6 +108,15 @@ impl ToolFormatter {
                     .unwrap_or("")
                     .to_string()
             }
+        };
+
+        // Truncate command if it's too long to prevent line wrapping
+        // Assume terminal width of ~80 chars, leave space for tool name and formatting
+        const MAX_COMMAND_LENGTH: usize = 60;
+        if command.len() > MAX_COMMAND_LENGTH {
+            format!("{}...", &command[..MAX_COMMAND_LENGTH - 3])
+        } else {
+            command
         }
     }
     
