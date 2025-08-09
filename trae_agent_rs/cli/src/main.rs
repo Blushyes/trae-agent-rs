@@ -12,6 +12,7 @@ use tracing::info;
 
 mod commands;
 mod interactive;
+mod output;
 mod ui;
 
 use commands::{run_command, interactive_command, tools_command, test_command};

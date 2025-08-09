@@ -4,7 +4,7 @@ use crate::agent::{ Agent, AgentExecution, AgentResult };
 use crate::agent::prompt::{ build_system_prompt_with_context, build_user_message };
 use crate::config::{ AgentConfig, Config };
 use crate::config::agent_config::OutputMode;
-use std::io::Write;
+use crate::output::{AgentOutput, AgentEvent, AgentExecutionContext, ToolExecutionInfo, ToolExecutionInfoBuilder, ToolExecutionStatus};
 use crate::error::{ AgentError, Result };
 use crate::llm::{ LlmClient, LlmMessage, LlmResponse, ChatOptions };
 use crate::tools::{ ToolExecutor, ToolRegistry };
@@ -22,12 +22,14 @@ pub struct TraeAgent {
     tool_executor: ToolExecutor,
     trajectory_recorder: Option<TrajectoryRecorder>,
     conversation_history: Vec<LlmMessage>,
+    output: Box<dyn AgentOutput>,
     current_task_displayed: bool,
+    execution_context: Option<AgentExecutionContext>,
 }
 
 impl TraeAgent {
-    /// Create a new TraeAgent
-    pub async fn new(agent_config: AgentConfig, config: Config) -> Result<Self> {
+    /// Create a new TraeAgent with output handler
+    pub async fn new_with_output(agent_config: AgentConfig, config: Config, output: Box<dyn AgentOutput>) -> Result<Self> {
         // Get model configuration
         let model_config = config
             .get_model(&agent_config.model)
@@ -60,8 +62,16 @@ impl TraeAgent {
             tool_executor,
             trajectory_recorder: None,
             conversation_history: Vec::new(),
+            output,
             current_task_displayed: false,
+            execution_context: None,
         })
+    }
+
+    /// Create a new TraeAgent with default null output (for backward compatibility)
+    pub async fn new(agent_config: AgentConfig, config: Config) -> Result<Self> {
+        use crate::output::events::NullOutput;
+        Self::new_with_output(agent_config, config, Box::new(NullOutput)).await
     }
 
     /// Get the system prompt for the agent with project context
@@ -273,41 +283,25 @@ impl TraeAgent {
             for tool_use in tool_uses {
                 if let crate::llm::ContentBlock::ToolUse { id, name, input } = tool_use {
                     // Display tool execution based on output mode
-                    match self.config.output_mode {
-                        OutputMode::Debug => {
-                            // Debug mode: show detailed information
-                            println!("🔧 Executing tool: {}", name);
-                            println!("📝 Parameters: {}", serde_json::to_string_pretty(&input).unwrap_or_else(|_| format!("{:?}", input)));
-                        }
-                        OutputMode::Normal => {
-                            // Normal mode: show simplified format
-                            if name == "bash" {
-                                // For bash commands, show executing status
-                                use crate::tools::output_formatter::{ToolOutputFormatter, ToolStatus};
-                                let formatter = ToolOutputFormatter::new();
-                                if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
-                                    println!("{}", formatter.format_tool_status("Bash", command, ToolStatus::Executing));
-                                } else {
-                                    println!("{}", formatter.format_tool_status("Bash", "", ToolStatus::Executing));
-                                }
-                            } else if name == "sequentialthinking" {
-                                // For thinking tool, we'll handle output differently later
-                                // Don't show execution message for thinking
-                            } else if name == "str_replace_based_edit_tool" {
-                                // For edit tool, don't show execution message - we'll show formatted result later
-                            } else {
-                                // For other tools, show simple execution message
-                                println!("🔧 {}", name);
-                            }
-                        }
-                    }
-
                     let tool_call = crate::tools::ToolCall {
                         id: id.clone(),
                         name: name.clone(),
                         parameters: input.clone(),
                         metadata: None,
                     };
+
+                    // Create tool execution info and emit started event
+                    let tool_info = ToolExecutionInfo::create_tool_execution_info(
+                        &tool_call,
+                        ToolExecutionStatus::Executing,
+                        None,
+                    );
+
+                    self.output.emit_event(AgentEvent::ToolExecutionStarted {
+                        tool_info: tool_info.clone(),
+                    }).await.unwrap_or_else(|e| {
+                        eprintln!("Warning: Failed to emit tool execution started event: {}", e);
+                    });
 
                     // Record tool call
                     if let Some(recorder) = &self.trajectory_recorder {
@@ -317,65 +311,45 @@ impl TraeAgent {
                     // Execute tool
                     let tool_result = self.tool_executor.execute(tool_call.clone()).await?;
 
-                    // Display tool result based on output mode
-                    match self.config.output_mode {
-                        OutputMode::Debug => {
-                            // Debug mode: show detailed result
-                            let truncated_content = if tool_result.content.len() > 300 {
-                                format!("{}...", &tool_result.content[..300])
-                            } else {
-                                tool_result.content.clone()
-                            };
-                            println!(
-                                "🔧 Tool result: success={}, content={}",
-                                tool_result.success,
-                                truncated_content
-                            );
-                        }
-                        OutputMode::Normal => {
-                            // Normal mode: handle different tools differently
-                            if name == "sequentialthinking" {
-                                // For thinking tool, extract and display the thought content directly
-                                if let Some(data) = &tool_result.data {
-                                    if let Some(thought) = data.get("thought") {
-                                        if let Some(thought_str) = thought.as_str() {
-                                            println!("{}", thought_str);
-                                        }
-                                    }
-                                } else {
-                                    // Fallback: try to extract from content
-                                    if let Some(start) = tool_result.content.find("Thought: ") {
-                                        let thought_start = start + "Thought: ".len();
-                                        if let Some(end) = tool_result.content[thought_start..].find("\n\n") {
-                                            let thought = &tool_result.content[thought_start..thought_start + end];
-                                            println!("{}", thought);
-                                        }
-                                    }
-                                }
-                            } else if name == "bash" {
-                                // For bash commands, update the status and show output
-                                use crate::tools::output_formatter::ToolOutputFormatter;
-                                let formatter = ToolOutputFormatter::new();
+                    // Create completed tool execution info and emit completed event
+                    let completed_tool_info = ToolExecutionInfo::create_tool_execution_info(
+                        &tool_call,
+                        if tool_result.success { ToolExecutionStatus::Success } else { ToolExecutionStatus::Error },
+                        Some(&tool_result),
+                    );
 
-                                if let Some(command) = tool_call.parameters.get("command").and_then(|v| v.as_str()) {
-                                    let formatted = formatter.format_tool_result_with_update("Bash", command, &tool_result.content, tool_result.success);
-                                    print!("{}", formatted);
-                                    std::io::stdout().flush().unwrap_or(());
-                                } else {
-                                    let formatted = formatter.format_tool_result_with_update("Bash", "", &tool_result.content, tool_result.success);
-                                    print!("{}", formatted);
-                                    std::io::stdout().flush().unwrap_or(());
+                    self.output.emit_event(AgentEvent::ToolExecutionCompleted {
+                        tool_info: completed_tool_info,
+                    }).await.unwrap_or_else(|e| {
+                        eprintln!("Warning: Failed to emit tool execution completed event: {}", e);
+                    });
+
+                    // Handle special tool behaviors
+                    if name == "sequentialthinking" {
+                        // For thinking tool, emit thinking event
+                        if let Some(data) = &tool_result.data {
+                            if let Some(thought) = data.get("thought") {
+                                if let Some(thought_str) = thought.as_str() {
+                                    self.output.emit_event(AgentEvent::AgentThinking {
+                                        step_number: step,
+                                        thinking: thought_str.to_string(),
+                                    }).await.unwrap_or_else(|e| {
+                                        eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                    });
                                 }
-                            } else if name == "str_replace_based_edit_tool" {
-                                // For edit tool, show formatted output based on operation type
-                                self.display_edit_tool_result(&tool_call, &tool_result);
-                            } else if name == "task_done" {
-                                // For task completion, show the summary
-                                println!("{}", tool_result.content);
-                            } else {
-                                // For other tools, show basic result
-                                if !tool_result.success {
-                                    println!("Error: {}", tool_result.content);
+                            }
+                        } else {
+                            // Fallback: try to extract from content
+                            if let Some(start) = tool_result.content.find("Thought: ") {
+                                let thought_start = start + "Thought: ".len();
+                                if let Some(end) = tool_result.content[thought_start..].find("\n\n") {
+                                    let thought = &tool_result.content[thought_start..thought_start + end];
+                                    self.output.emit_event(AgentEvent::AgentThinking {
+                                        step_number: step,
+                                        thinking: thought.to_string(),
+                                    }).await.unwrap_or_else(|e| {
+                                        eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                    });
                                 }
                             }
                         }
@@ -420,17 +394,7 @@ impl TraeAgent {
         Ok(false)
     }
 
-    /// Display formatted output for edit tool results
-    fn display_edit_tool_result(&self, tool_call: &crate::tools::ToolCall, tool_result: &crate::tools::ToolResult) {
-        use crate::tools::output_formatter::ToolOutputFormatter;
 
-        let formatter = ToolOutputFormatter::new();
-        let formatted_output = formatter.format_tool_result(tool_call, tool_result);
-
-        if !formatted_output.is_empty() {
-            println!("{}", formatted_output);
-        }
-    }
 }
 
 #[async_trait]
@@ -468,19 +432,26 @@ impl TraeAgent {
         // Reset task display flag when starting a new conversation
         self.current_task_displayed = false;
 
-        // Display task only once at the beginning, format based on output mode
-        if !self.current_task_displayed {
-            match self.config.output_mode {
-                OutputMode::Debug => {
-                    println!("📋 Task: {}", task);
-                }
-                OutputMode::Normal => {
-                    // In normal mode, just show the task without emoji
-                    println!("Task: {}", task);
-                }
-            }
-            self.current_task_displayed = true;
+        // Create execution context
+        self.execution_context = Some(AgentExecutionContext {
+            agent_id: "trae_agent".to_string(),
+            task: task.to_string(),
+            project_path: project_path.to_string_lossy().to_string(),
+            max_steps: self.config.max_steps,
+            current_step: 0,
+            execution_time: std::time::Duration::from_secs(0),
+        });
+
+        // Emit execution started event
+        if let Some(context) = &self.execution_context {
+            self.output.emit_event(AgentEvent::ExecutionStarted {
+                context: context.clone(),
+            }).await.unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to emit execution started event: {}", e);
+            });
         }
+
+        self.current_task_displayed = true;
 
         // Record task start
         if let Some(recorder) = &self.trajectory_recorder {
@@ -537,13 +508,19 @@ impl TraeAgent {
                     return Ok(AgentExecution::failure(
                         format!("Error in step {}: {}", step, e),
                         step,
-                        duration
+                        start_time.elapsed().as_millis() as u64
                     ));
                 }
             }
         }
 
-        let duration = start_time.elapsed().as_millis() as u64;
+        let duration = start_time.elapsed();
+
+        // Update execution context
+        if let Some(context) = &mut self.execution_context {
+            context.current_step = step;
+            context.execution_time = duration;
+        }
 
         // Record task completion
         if let Some(recorder) = &self.trajectory_recorder {
@@ -556,22 +533,41 @@ impl TraeAgent {
                         format!("Task incomplete after {} steps", step)
                     },
                     step,
-                    duration
+                    duration.as_millis() as u64
                 )
             ).await?;
         }
+
+        // Emit execution completed event
+        if let Some(context) = &self.execution_context {
+            let summary = if task_completed {
+                "Task completed successfully".to_string()
+            } else {
+                format!("Task incomplete after {} steps", step)
+            };
+
+            self.output.emit_event(AgentEvent::ExecutionCompleted {
+                context: context.clone(),
+                success: task_completed,
+                summary: summary.clone(),
+            }).await.unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to emit execution completed event: {}", e);
+            });
+        }
+
+        let duration_ms = duration.as_millis() as u64;
 
         if task_completed {
             Ok(AgentExecution::success(
                 "Task completed successfully".to_string(),
                 step,
-                duration
+                duration_ms
             ))
         } else {
             Ok(AgentExecution::failure(
                 format!("Task incomplete after {} steps", step),
                 step,
-                duration
+                duration_ms
             ))
         }
     }

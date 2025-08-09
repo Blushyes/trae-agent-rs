@@ -10,6 +10,7 @@
 pub mod config;
 pub mod error;
 pub mod agent;
+pub mod output;
 pub mod trajectory;
 pub mod llm;
 pub mod tools;

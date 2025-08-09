@@ -21,10 +21,9 @@ pub async fn run_command(
     info!("Executing task: {}", task);
 
     use trae_agent_core::{ Config, trajectory::TrajectoryRecorder, agent::TraeAgent };
+    use crate::output::cli_handler::{CliOutputHandler, CliOutputConfig};
 
-    println!("🚀 Starting task execution...");
-    println!("📝 Task: {}", task);
-    println!("⚙️  Config: {}", config_path.display());
+    // Output is now handled by the CLI output handler
 
     // Load configuration using API-based system
     let _config = if config_path.exists() {
@@ -80,7 +79,16 @@ pub async fn run_command(
         trae_agent_core::config::agent_config::OutputMode::Normal
     };
 
-    let mut agent = TraeAgent::new(agent_config.clone(), _config.clone()).await?;
+    // Create CLI output handler
+    let cli_config = CliOutputConfig {
+        use_colors: true,
+        show_debug: debug_output,
+        show_timestamps: false,
+        realtime_updates: true,
+    };
+    let cli_output = Box::new(CliOutputHandler::new(cli_config));
+
+    let mut agent = TraeAgent::new_with_output(agent_config.clone(), _config.clone(), cli_output).await?;
 
     // Initialize trajectory recorder
     let trajectory = TrajectoryRecorder::new();
@@ -105,9 +113,8 @@ pub async fn run_command(
     println!("📁 Project path: {}", project_path.display());
 
     // Execute the task using the real agent
-    println!("\n⏳ Executing task...");
 
-    let execution_result = agent.execute_task_with_context(&task, &project_path).await?;
+    let _execution_result = agent.execute_task_with_context(&task, &project_path).await?;
 
     if must_patch {
         println!("📄 Creating patch file: {}", patch_path.display());
@@ -122,9 +129,7 @@ pub async fn run_command(
         println!("📊 Trajectory saved to: {}", trajectory_file.display());
     }
 
-    println!("✅ Task completed successfully!");
-    println!("📈 Executed {} steps", execution_result.steps_executed);
-    println!("⏱️  Duration: {:.2}s", (execution_result.duration_ms as f64) / 1000.0);
+    // Task completion is now handled by the CLI output handler
 
     Ok(())
 }

@@ -38,6 +38,7 @@ shellexpand = { workspace = true }
 trae-agent-core = { path = "../core" }
 
 # CLI-specific dependencies
+async-trait = "0.1"
 console = "0.15"
 indicatif = "0.17"
 dialoguer = "0.11"
