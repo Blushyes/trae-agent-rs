@@ -321,6 +321,151 @@ impl Default for DynamicStatusLineProps {
 }
 
 #[derive(Clone, Props)]
+struct HeaderSectionProps {
+    show_tips: bool,
+}
+
+impl Default for HeaderSectionProps {
+    fn default() -> Self {
+        Self { show_tips: false }
+    }
+}
+
+/// Header Section Component - Contains logo and tips
+#[component]
+fn HeaderSection(_hooks: Hooks, props: &HeaderSectionProps) -> impl Into<AnyElement<'static>> {
+    let show_tips = props.show_tips;
+
+    element! {
+        View(
+            key: "header-section",
+            margin_bottom: 1,
+            flex_direction: FlexDirection::Column,
+            flex_shrink: 0.0, // Prevent logo from shrinking
+        ) {
+            View(key: "logcontanier", margin_bottom: 1) {
+                TraeLogo(key: "static-logo")
+            }
+            // Tips (only show when no messages)
+            #(if show_tips {
+                Some(element! {
+                    View(
+                        flex_direction: FlexDirection::Column,
+                        margin_bottom: 1,
+                    ) {
+                        Text(
+                            content: "Tips for getting started:",
+                            color: Color::White,
+                        )
+                        Text(
+                            content: "1. Ask questions, edit files, or run commands.",
+                            color: Color::White,
+                        )
+                        Text(
+                            content: "2. Be specific for the best results.",
+                            color: Color::White,
+                        )
+                        Text(
+                            content: "3. /help for more information.",
+                            color: Color::White,
+                        )
+                    }
+                })
+            } else {
+                None
+            })
+        }
+    }
+}
+
+#[derive(Clone, Props)]
+struct MessagesAreaProps {
+    messages: Vec<(String, String, Option<String>)>, // (role, content, message_id)
+    terminal_width: usize,
+}
+
+impl Default for MessagesAreaProps {
+    fn default() -> Self {
+        Self {
+            messages: Vec::new(),
+            terminal_width: 80,
+        }
+    }
+}
+
+/// Messages Area Component - Chat messages with text wrapping
+#[component]
+fn MessagesArea(_hooks: Hooks, props: &MessagesAreaProps) -> impl Into<AnyElement<'static>> {
+    let messages = &props.messages;
+    let terminal_width = props.terminal_width;
+
+    element! {
+        View(
+            key: "messages-container",
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::Scroll, // Enable scrolling for long content
+            min_height: 0, // Prevent flex item from growing beyond container
+            position: Position::Relative, // Stable positioning
+            flex_shrink: 1.0, // Allow shrinking when needed
+        ) {
+            #(messages.iter().enumerate().map(|(idx, (role, content, message_id))| {
+                let wrapped_lines = wrap_text(content, terminal_width);
+
+                // 使用message_id或者索引作为key
+                let msg_key = message_id.as_ref().map(|id| id.clone()).unwrap_or_else(|| idx.to_string());
+
+                if role == "user" {
+                    element! {
+                        View(
+                            key: format!("user-msg-{}", msg_key),
+                            width: 100pct,
+                            margin_bottom: 1,
+                            flex_direction: FlexDirection::Column,
+                        ) {
+                            #(wrapped_lines.iter().enumerate().map(|(i, line)| {
+                                element! {
+                                    View(key: format!("user-line-{}-{}", msg_key, i), width: 100pct) {
+                                        Text(
+                                            content: if i == 0 {
+                                                format!("> {}", line)
+                                            } else {
+                                                format!("  {}", line) // 续行缩进
+                                            },
+                                            color: Color::White,
+                                        )
+                                    }
+                                }
+                            }))
+                        }
+                    }
+                } else {
+                    element! {
+                        View(
+                            key: format!("assistant-msg-{}", msg_key),
+                            width: 100pct,
+                            margin_bottom: 1,
+                            flex_direction: FlexDirection::Column,
+                        ) {
+                            #(wrapped_lines.iter().enumerate().map(|(i, line)| {
+                                element! {
+                                    View(key: format!("assistant-line-{}-{}", msg_key, i), width: 100pct) {
+                                        Text(
+                                            content: line,
+                                            color: Color::White,
+                                        )
+                                    }
+                                }
+                            }))
+                        }
+                    }
+                }
+            }))
+        }
+    }
+}
+
+#[derive(Clone, Props)]
 struct InputSectionProps {
     input_value: String,
 }
@@ -625,112 +770,17 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 max_height: 100pct,         // Constrain height to prevent expansion
             ) {
                 // Header with TRAE logo - always visible
-                View(
-                    key: "header-section",
-                    margin_bottom: 1,
-                    flex_direction: FlexDirection::Column,
-                    flex_shrink: 0.0, // Prevent logo from shrinking
-                ) {
-                    View(key: "logcontanier", margin_bottom: 1) {
-                        TraeLogo(key: "static-logo")
-                    }
-                    // Tips (only show when no messages)
-                    #(if messages.read().is_empty() {
-                        Some(element! {
-                            View(
-                                flex_direction: FlexDirection::Column,
-                                margin_bottom: 1,
-                            ) {
-                                Text(
-                                    content: "Tips for getting started:",
-                                    color: Color::White,
-                                )
-                                Text(
-                                    content: "1. Ask questions, edit files, or run commands.",
-                                    color: Color::White,
-                                )
-                                Text(
-                                    content: "2. Be specific for the best results.",
-                                    color: Color::White,
-                                )
-                                Text(
-                                    content: "3. /help for more information.",
-                                    color: Color::White,
-                                )
-                            }
-                        })
-                    } else {
-                        None
-                    })
-                }
+                HeaderSection(
+                    key: "header-section-component",
+                    show_tips: messages.read().is_empty(),
+                )
 
                 // Chat messages area - 支持文本换行，防止UI错乱
-                View(
-                    key: "messages-container",
-                    flex_grow: 1.0,
-                    flex_direction: FlexDirection::Column,
-                    overflow: Overflow::Scroll, // Enable scrolling for long content
-                    min_height: 0, // Prevent flex item from growing beyond container
-                    position: Position::Relative, // Stable positioning
-                    flex_shrink: 1.0, // Allow shrinking when needed
-                ) {
-                #(messages.read().iter().enumerate().map(|(idx, (role, content, message_id))| {
-                    // 使用缓存的终端宽度，避免频繁系统调用
-                    let cached_width = *terminal_width.read();
-                    let wrapped_lines = wrap_text(content, cached_width);
-
-                    // 使用message_id或者索引作为key
-                    let msg_key = message_id.as_ref().map(|id| id.clone()).unwrap_or_else(|| idx.to_string());
-
-                    if role == "user" {
-                        element! {
-                            View(
-                                key: format!("user-msg-{}", msg_key),
-                                width: 100pct,
-                                margin_bottom: 1,
-                                flex_direction: FlexDirection::Column,
-                            ) {
-                                #(wrapped_lines.iter().enumerate().map(|(i, line)| {
-                                    element! {
-                                        View(key: format!("user-line-{}-{}", msg_key, i), width: 100pct) {
-                                            Text(
-                                                content: if i == 0 {
-                                                    format!("> {}", line)
-                                                } else {
-                                                    format!("  {}", line) // 续行缩进
-                                                },
-                                                color: Color::White,
-                                            )
-                                        }
-                                    }
-                                }))
-                            }
-                        }
-                    } else {
-                        element! {
-                            View(
-                                key: format!("assistant-msg-{}", msg_key),
-                                width: 100pct,
-                                margin_bottom: 1,
-                                flex_direction: FlexDirection::Column,
-                            ) {
-                                #(wrapped_lines.iter().enumerate().map(|(i, line)| {
-                                    element! {
-                                        View(key: format!("assistant-line-{}-{}", msg_key, i), width: 100pct) {
-                                            Text(
-                                                content: line,
-                                                color: Color::White,
-                                            )
-                                        }
-                                    }
-                                }))
-                            }
-                        }
-                    }
-                }))
-
-
-                }
+                MessagesArea(
+                    key: "messages-area-component",
+                    messages: messages.read().clone(),
+                    terminal_width: *terminal_width.read(),
+                )
             }
 
             // Dynamic status line (isolated component to prevent parent re-rendering)
