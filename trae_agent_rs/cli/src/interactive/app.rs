@@ -30,15 +30,15 @@ fn apply_easing(easing: Easing, t: f64) -> f64 {
     }
 }
 
-/// Get terminal width with fallback
+/// Get terminal width with fallback (used as fallback only)
 fn get_terminal_width() -> usize {
     match crossterm::terminal::size() {
         Ok((cols, _)) => {
-            // Reserve some space for padding and borders, and ensure minimum width
-            let usable_width = (cols as usize).saturating_sub(8); // 8 chars for padding/borders
-            std::cmp::max(usable_width, 40) // Minimum 40 chars
+            // Reserve space for padding and borders, and ensure minimum width
+            let usable_width = (cols as usize).saturating_sub(12); // 12 chars for padding/borders/safety
+            std::cmp::max(usable_width, 30) // Minimum 30 chars
         }
-        Err(_) => 80, // Fallback to 80 columns
+        Err(_) => 68, // Fallback to 68 columns (80 - 12 for safety)
     }
 }
 
@@ -133,7 +133,6 @@ struct UiAnimationConfig {
 struct AppContext {
     config: Config,
     project_path: PathBuf,
-    terminal_width: usize,
     ui_sender: broadcast::Sender<AppMessage>,
     ui_anim: UiAnimationConfig,
 }
@@ -174,7 +173,6 @@ impl AppContext {
         Self {
             config,
             project_path,
-            terminal_width: get_terminal_width(),
             ui_sender,
             ui_anim,
         }
@@ -406,11 +404,15 @@ fn MessagesArea(mut hooks: Hooks, _props: &MessagesAreaProps) -> impl Into<AnyEl
     let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new());
 
     let (width, _height) = hooks.use_terminal_size();
+    // Get current terminal width and reserve space for padding/borders
+    // Subtract more space to prevent line wrapping issues
     let terminal_width = if width as usize > 0 {
-        width as usize
+        (width as usize).saturating_sub(12) // Reserve 12 chars for padding, borders, and safety margin
     } else {
-        get_terminal_width()
+        get_terminal_width().saturating_sub(12)
     };
+    // Ensure minimum usable width
+    let terminal_width = std::cmp::max(terminal_width, 30);
 
     // Subscribe to UI events and update local messages state
     let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
