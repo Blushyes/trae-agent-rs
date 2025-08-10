@@ -28,7 +28,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Logging
 tracing = "0.1"
@@ -49,7 +49,7 @@ dirs = "6.0"
 shellexpand = "3.0"
 
 # Configuration
-config = "0.14"
+config = "0.15"
 
 # Template engine
 handlebars = "6.0"
@@ -59,4 +59,4 @@ walkdir = "2.0"
 ignore = "0.4"
 
 # Process execution
-which = "6.0"
+which = "8.0"

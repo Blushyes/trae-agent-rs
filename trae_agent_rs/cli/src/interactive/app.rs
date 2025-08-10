@@ -531,9 +531,6 @@ fn InputSection(mut hooks: Hooks, _props: &InputSectionProps) -> impl Into<AnyEl
                     if kind != KeyEventKind::Release =>
                 {
                     match code {
-                        KeyCode::Char('q') if input_value.read().is_empty() => {
-                            // Let the App handle exit via system context; here we ignore
-                        }
                         KeyCode::Char(c) => {
                             let mut current_input = input_value.read().clone();
                             current_input.push(c);
@@ -748,33 +745,7 @@ fn DynamicStatusLine(
 
 /// Main TRAE Interactive Application Component
 #[component]
-fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    let mut system = hooks.use_context_mut::<SystemContext>();
-    let _app_context = hooks.use_context::<AppContext>();
-
-    // Only keep exit flag in App; other UI states live within components
-    let should_exit = hooks.use_state(|| false);
-
-    // Handle terminal events for global exit
-    hooks.use_terminal_events({
-        let mut should_exit = should_exit;
-        move |event| match event {
-            TerminalEvent::Key(KeyEvent { code, kind, .. }) if kind != KeyEventKind::Release => {
-                match code {
-                    KeyCode::Char('q') => {
-                        should_exit.set(true);
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    });
-
-    if should_exit.get() {
-        system.exit();
-    }
-
+fn TraeApp() -> impl Into<AnyElement<'static>> {
     element! {
         View(
             key: "main-container",
