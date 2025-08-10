@@ -777,7 +777,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             key: "main-container",
             flex_direction: FlexDirection::Column,
             width: width,
-            height: height,
+            height: height - 1,
             padding: 1,
             position: Position::Relative, // Ensure stable positioning
         ) {
