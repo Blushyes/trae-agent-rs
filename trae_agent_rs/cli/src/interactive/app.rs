@@ -4,9 +4,32 @@ use crate::output::interactive_handler::{InteractiveMessage, InteractiveOutputHa
 use anyhow::Result;
 use iocraft::prelude::*;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use trae_agent_core::Config;
 use unicode_width::UnicodeWidthStr;
+
+/// Easing options for token animation
+#[derive(Debug, Clone, Copy)]
+enum Easing {
+    Linear,
+    EaseOutCubic,
+    EaseInOutCubic,
+}
+
+fn apply_easing(easing: Easing, t: f64) -> f64 {
+    match easing {
+        Easing::Linear => t,
+        Easing::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
+        Easing::EaseInOutCubic => {
+            if t < 0.5 {
+                4.0 * t * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+            }
+        }
+    }
+}
+
 /// Get terminal width with fallback
 fn get_terminal_width() -> usize {
     match crossterm::terminal::size() {
@@ -100,18 +123,60 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
 /// Context for interactive mode - immutable application configuration
 #[derive(Debug, Clone)]
+struct UiAnimationConfig {
+    easing: Easing,
+    frame_interval_ms: u64,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Clone)]
 struct AppContext {
     config: Config,
     project_path: PathBuf,
     terminal_width: usize,
+    ui_sender: broadcast::Sender<AppMessage>,
+    ui_anim: UiAnimationConfig,
 }
 
 impl AppContext {
-    fn new(config: Config, project_path: PathBuf) -> Self {
+    fn new(
+        config: Config,
+        project_path: PathBuf,
+        ui_sender: broadcast::Sender<AppMessage>,
+    ) -> Self {
+        // Load UI animation config from env (fallback to defaults)
+        let easing = std::env::var("TRAE_UI_EASING")
+            .ok()
+            .and_then(|v| match v.to_lowercase().as_str() {
+                "linear" => Some(Easing::Linear),
+                "ease_in_out_cubic" | "easeinoutcubic" | "ease-in-out-cubic" => {
+                    Some(Easing::EaseInOutCubic)
+                }
+                "ease_out_cubic" | "easeoutcubic" | "ease-out-cubic" => Some(Easing::EaseOutCubic),
+                _ => None,
+            })
+            .unwrap_or(Easing::EaseOutCubic);
+        let frame_interval_ms = std::env::var("TRAE_UI_FRAME_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(10);
+        let duration_ms = std::env::var("TRAE_UI_DURATION_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(3000);
+
+        let ui_anim = UiAnimationConfig {
+            easing,
+            frame_interval_ms,
+            duration_ms,
+        };
+
         Self {
             config,
             project_path,
             terminal_width: get_terminal_width(),
+            ui_sender,
+            ui_anim,
         }
     }
 }
@@ -120,21 +185,18 @@ impl AppContext {
 #[derive(Debug, Clone)]
 pub enum AppMessage {
     SystemMessage(String),
+    UserMessage(String),
     InteractiveUpdate(InteractiveMessage),
+    AgentTaskStarted { operation: String },
     AgentExecutionCompleted,
-    ToolStatusUpdate {
-        execution_id: String,
-        status: String,
-    },
-    TokenUpdate {
-        tokens: u32,
-    },
+    TokenUpdate { tokens: u32 },
 }
 
 /// Convert AppMessage to UI message tuple (role, content, message_id)
 fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String, Option<String>)> {
     match app_message {
         AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
+        AppMessage::UserMessage(msg) => Some(("user".to_string(), msg, None)),
         AppMessage::InteractiveUpdate(interactive_msg) => match interactive_msg {
             InteractiveMessage::AgentThinking(thinking) => {
                 Some(("agent".to_string(), thinking, None))
@@ -165,76 +227,22 @@ fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String,
                 Some(("system".to_string(), stats, None))
             }
         },
+        AppMessage::AgentTaskStarted { .. } => None,
         AppMessage::AgentExecutionCompleted => None,
-        AppMessage::ToolStatusUpdate {
-            execution_id,
-            status,
-        } => Some(("tool_status".to_string(), status, Some(execution_id))),
-        AppMessage::TokenUpdate { tokens: _ } => None, // Token updates don't create UI messages, they update state directly
+        AppMessage::TokenUpdate { .. } => None, // Token updates don't create UI messages, they update state directly
     }
 }
 
-/// Spawn agent task execution for UI components
+/// Spawn agent task execution and broadcast UI events
 fn spawn_ui_agent_task(
     input: String,
     config: Config,
     project_path: PathBuf,
-    messages: iocraft::hooks::State<Vec<(String, String, Option<String>)>>,
-    is_processing: iocraft::hooks::State<bool>,
-    _current_operation: iocraft::hooks::State<String>,
-    _current_tokens: iocraft::hooks::State<u32>,
-    target_tokens: iocraft::hooks::State<u32>,
-    token_animation_start: iocraft::hooks::State<std::time::Instant>,
+    ui_sender: broadcast::Sender<AppMessage>,
 ) {
-    // Create a channel for UI updates
-    let (ui_sender, mut ui_receiver) = mpsc::unbounded_channel();
-
-    // Forward UI messages to the component state
-    let mut messages_for_receiver = messages.clone();
-    let mut is_processing_for_receiver = is_processing.clone();
-    let mut target_tokens_for_receiver = target_tokens.clone();
-    let mut token_animation_start_for_receiver = token_animation_start.clone();
-    tokio::spawn(async move {
-        while let Some(app_message) = ui_receiver.recv().await {
-            match app_message {
-                AppMessage::AgentExecutionCompleted => {
-                    is_processing_for_receiver.set(false);
-                    // Clear dynamic status when processing completes
-                    // Note: We can't access current_operation here directly, but it will be hidden when is_processing is false
-                }
-                AppMessage::TokenUpdate { tokens } => {
-                    // Start token animation to new target
-                    target_tokens_for_receiver.set(tokens);
-                    token_animation_start_for_receiver.set(std::time::Instant::now());
-                }
-                _ => {
-                    // Convert and add/update message if applicable
-                    if let Some((role, content, message_id)) =
-                        app_message_to_ui_message(app_message)
-                    {
-                        let mut current_messages = messages_for_receiver.read().clone();
-
-                        if let Some(msg_id) = message_id {
-                            // This is a tool status update - find and replace existing message
-                            if let Some(pos) = current_messages
-                                .iter()
-                                .position(|(_, _, id)| id.as_ref() == Some(&msg_id))
-                            {
-                                current_messages[pos] = (role, content, Some(msg_id));
-                            } else {
-                                // Tool message not found, add as new message
-                                current_messages.push((role, content, Some(msg_id)));
-                            }
-                        } else {
-                            // Regular message - just add
-                            current_messages.push((role, content, None));
-                        }
-
-                        messages_for_receiver.set(current_messages);
-                    }
-                }
-            }
-        }
+    // Notify start
+    let _ = ui_sender.send(AppMessage::AgentTaskStarted {
+        operation: "Considering".to_string(),
     });
 
     // Execute agent task
@@ -255,8 +263,9 @@ fn spawn_ui_agent_task(
 pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
     println!("🎯 Starting Trae Agent Interactive Mode");
 
-    // Create app context with immutable configuration
-    let app_context = AppContext::new(config, project_path);
+    // Create UI broadcast channel and app context
+    let (ui_sender, _ui_rx) = broadcast::channel::<AppMessage>(256);
+    let app_context = AppContext::new(config, project_path, ui_sender);
 
     // Run the iocraft-based UI with context provider
     tokio::task::spawn_blocking(move || {
@@ -302,39 +311,42 @@ fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
 }
 
 #[derive(Clone, Props)]
-struct DynamicStatusLineProps {
-    is_processing: bool,
-    operation: String,
-    start_time: std::time::Instant,
-    tokens: u32,
-}
+struct DynamicStatusLineProps {}
 
 impl Default for DynamicStatusLineProps {
     fn default() -> Self {
-        Self {
-            is_processing: false,
-            operation: String::new(),
-            start_time: std::time::Instant::now(),
-            tokens: 0,
-        }
+        Self {}
     }
 }
 
 #[derive(Clone, Props)]
-struct HeaderSectionProps {
-    show_tips: bool,
-}
+struct HeaderSectionProps {}
 
 impl Default for HeaderSectionProps {
     fn default() -> Self {
-        Self { show_tips: false }
+        Self {}
     }
 }
 
 /// Header Section Component - Contains logo and tips
 #[component]
-fn HeaderSection(_hooks: Hooks, props: &HeaderSectionProps) -> impl Into<AnyElement<'static>> {
-    let show_tips = props.show_tips;
+fn HeaderSection(mut hooks: Hooks, _props: &HeaderSectionProps) -> impl Into<AnyElement<'static>> {
+    // Local state: tips should be shown until the first UI message appears
+    let show_tips = hooks.use_state(|| true);
+
+    // Subscribe to UI broadcast and hide tips when any UI message appears
+    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
+    let mut show_tips_clone = show_tips.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender.subscribe();
+        while let Ok(msg) = rx.recv().await {
+            if app_message_to_ui_message(msg).is_some() {
+                if *show_tips_clone.read() {
+                    show_tips_clone.set(false);
+                }
+            }
+        }
+    });
 
     element! {
         View(
@@ -347,7 +359,7 @@ fn HeaderSection(_hooks: Hooks, props: &HeaderSectionProps) -> impl Into<AnyElem
                 TraeLogo(key: "static-logo")
             }
             // Tips (only show when no messages)
-            #(if show_tips {
+            #(if *show_tips.read() {
                 Some(element! {
                     View(
                         flex_direction: FlexDirection::Column,
@@ -379,25 +391,51 @@ fn HeaderSection(_hooks: Hooks, props: &HeaderSectionProps) -> impl Into<AnyElem
 }
 
 #[derive(Clone, Props)]
-struct MessagesAreaProps {
-    messages: Vec<(String, String, Option<String>)>, // (role, content, message_id)
-    terminal_width: usize,
-}
+struct MessagesAreaProps {}
 
 impl Default for MessagesAreaProps {
     fn default() -> Self {
-        Self {
-            messages: Vec::new(),
-            terminal_width: 80,
-        }
+        Self {}
     }
 }
 
 /// Messages Area Component - Chat messages with text wrapping
 #[component]
-fn MessagesArea(_hooks: Hooks, props: &MessagesAreaProps) -> impl Into<AnyElement<'static>> {
-    let messages = &props.messages;
-    let terminal_width = props.terminal_width;
+fn MessagesArea(mut hooks: Hooks, _props: &MessagesAreaProps) -> impl Into<AnyElement<'static>> {
+    // Local state: messages and terminal width
+    let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new());
+
+    let (width, _height) = hooks.use_terminal_size();
+    let terminal_width = if width as usize > 0 {
+        width as usize
+    } else {
+        get_terminal_width()
+    };
+
+    // Subscribe to UI events and update local messages state
+    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
+    let mut messages_clone = messages.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender.subscribe();
+        while let Ok(app_message) = rx.recv().await {
+            if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
+                let mut current = messages_clone.read().clone();
+                if let Some(msg_id) = message_id {
+                    if let Some(pos) = current
+                        .iter()
+                        .position(|(_, _, id)| id.as_ref() == Some(&msg_id))
+                    {
+                        current[pos] = (role, content, Some(msg_id));
+                    } else {
+                        current.push((role, content, Some(msg_id)));
+                    }
+                } else {
+                    current.push((role, content, None));
+                }
+                messages_clone.set(current);
+            }
+        }
+    });
 
     element! {
         View(
@@ -409,7 +447,7 @@ fn MessagesArea(_hooks: Hooks, props: &MessagesAreaProps) -> impl Into<AnyElemen
             position: Position::Relative, // Stable positioning
             flex_shrink: 1.0, // Allow shrinking when needed
         ) {
-            #(messages.iter().enumerate().map(|(idx, (role, content, message_id))| {
+            #(messages.read().iter().enumerate().map(|(idx, (role, content, message_id))| {
                 let wrapped_lines = wrap_text(content, terminal_width);
 
                 // 使用message_id或者索引作为key
@@ -427,11 +465,7 @@ fn MessagesArea(_hooks: Hooks, props: &MessagesAreaProps) -> impl Into<AnyElemen
                                 element! {
                                     View(key: format!("user-line-{}-{}", msg_key, i), width: 100pct) {
                                         Text(
-                                            content: if i == 0 {
-                                                format!("> {}", line)
-                                            } else {
-                                                format!("  {}", line) // 续行缩进
-                                            },
+                                            content: if i == 0 { format!("> {}", line) } else { format!("  {}", line) },
                                             color: Color::White,
                                         )
                                     }
@@ -466,45 +500,99 @@ fn MessagesArea(_hooks: Hooks, props: &MessagesAreaProps) -> impl Into<AnyElemen
 }
 
 #[derive(Clone, Props)]
-struct InputSectionProps {
-    input_value: String,
-}
+struct InputSectionProps {}
 
 impl Default for InputSectionProps {
     fn default() -> Self {
-        Self {
-            input_value: String::new(),
-        }
+        Self {}
     }
 }
 
 /// Input Section Component - Fixed bottom area for input and status
 #[component]
-fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElement<'static>> {
-    let input_value = &props.input_value;
+fn InputSection(mut hooks: Hooks, _props: &InputSectionProps) -> impl Into<AnyElement<'static>> {
+    // Local input state
+    let input_value = hooks.use_state(|| String::new());
+
+    // Subscribe to keyboard and dispatch events
+    let app_context = hooks.use_context::<AppContext>();
+    let config = app_context.config.clone();
+    let project_path = app_context.project_path.clone();
+    let ui_sender = app_context.ui_sender.clone();
+
+    hooks.use_terminal_events({
+        let mut input_value = input_value;
+        let config = config.clone();
+        let project_path = project_path.clone();
+        let ui_sender = ui_sender.clone();
+        move |event| {
+            match event {
+                TerminalEvent::Key(KeyEvent { code, kind, .. })
+                    if kind != KeyEventKind::Release =>
+                {
+                    match code {
+                        KeyCode::Char('q') if input_value.read().is_empty() => {
+                            // Let the App handle exit via system context; here we ignore
+                        }
+                        KeyCode::Char(c) => {
+                            let mut current_input = input_value.read().clone();
+                            current_input.push(c);
+                            input_value.set(current_input);
+                        }
+                        KeyCode::Backspace => {
+                            let current = input_value.read().clone();
+                            if !current.is_empty() {
+                                input_value.set(current[..current.len() - 1].to_string());
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let input = input_value.read().clone();
+                            if input.trim().is_empty() {
+                                return;
+                            }
+
+                            // Clear input immediately
+                            input_value.set(String::new());
+
+                            // Broadcast user message and start task
+                            let _ = ui_sender.send(AppMessage::UserMessage(input.clone()));
+                            spawn_ui_agent_task(
+                                input,
+                                config.clone(),
+                                project_path.clone(),
+                                ui_sender.clone(),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
 
     element! {
         View(
             key: "input-section",
-            flex_shrink: 0.0, // Prevent shrinking
-            flex_grow: 0.0,   // Prevent growing
+            flex_shrink: 0.0,
+            flex_grow: 0.0,
             flex_direction: FlexDirection::Column,
-            height: 5,        // Fixed height for input area
-            position: Position::Relative, // Ensure stable positioning
+            height: 5,
+            position: Position::Relative,
         ) {
             // Input area - 简约边框风格，单行高度
             View(
                 key: "input-container",
                 border_style: BorderStyle::Round,
-                border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
+                border_color: Color::Rgb { r: 100, g: 149, b: 237 },
                 padding_left: 1,
                 padding_right: 1,
                 padding_top: 0,
                 padding_bottom: 0,
                 margin_bottom: 1,
-                height: 3, // Fixed height to prevent expansion
-                flex_shrink: 0.0, // Prevent shrinking
-                flex_grow: 0.0,   // Prevent growing
+                height: 3,
+                flex_shrink: 0.0,
+                flex_grow: 0.0,
             ) {
                 View(
                     flex_direction: FlexDirection::Row,
@@ -514,7 +602,7 @@ fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElemen
                         content: "> ",
                         color: Color::Rgb { r: 100, g: 149, b: 237 },
                     )
-                    #(if input_value.is_empty() {
+                    #(if input_value.read().is_empty() {
                         Some(element! {
                             Text(
                                 content: "Type your message or @path/to/file",
@@ -524,7 +612,7 @@ fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElemen
                     } else {
                         Some(element! {
                             Text(
-                                content: input_value,
+                                content: &input_value.to_string(),
                                 color: Color::White,
                             )
                         })
@@ -532,9 +620,7 @@ fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElemen
                 }
             }
             // Status bar - 简约风格
-            View(
-                padding: 1,
-            ) {
+            View(padding: 1) {
                 Text(
                     content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
                     color: Color::DarkGrey,
@@ -548,18 +634,59 @@ fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElemen
 #[component]
 fn DynamicStatusLine(
     mut hooks: Hooks,
-    props: &DynamicStatusLineProps,
+    _props: &DynamicStatusLineProps,
 ) -> impl Into<AnyElement<'static>> {
-    let is_processing = props.is_processing;
-    let operation = props.operation.clone();
-    let start_time = props.start_time;
-    let tokens = props.tokens;
+    // Local state
+    let is_processing = hooks.use_state(|| false);
+    let operation = hooks.use_state(|| String::new());
+    let start_time = hooks.use_state(|| std::time::Instant::now());
+    let current_tokens = hooks.use_state(|| 0u32);
+    let target_tokens = hooks.use_state(|| 0u32);
+    let token_animation_start = hooks.use_state(|| std::time::Instant::now());
+    // 默认时长 3s，可通过 AppContext 配置覆盖
+    let ui_duration_ms = hooks.use_context::<AppContext>().ui_anim.duration_ms;
+    let token_animation_duration =
+        hooks.use_state(|| std::time::Duration::from_millis(ui_duration_ms));
 
-    // IMPORTANT: Always call hooks in the same order, regardless of conditions
-    // Internal timer for this component only
+    // Subscribe to UI events (clone only the sender to avoid non-Send context capture)
+    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
+    let mut is_processing_clone = is_processing.clone();
+    let mut operation_clone = operation.clone();
+    let mut start_time_clone = start_time.clone();
+    let mut current_tokens_clone = current_tokens.clone();
+    let mut target_tokens_clone = target_tokens.clone();
+    let mut token_animation_start_clone = token_animation_start.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender.subscribe();
+        while let Ok(event) = rx.recv().await {
+            match event {
+                AppMessage::AgentTaskStarted { operation } => {
+                    is_processing_clone.set(true);
+                    operation_clone.set(operation);
+                    start_time_clone.set(std::time::Instant::now());
+                    current_tokens_clone.set(0);
+                    target_tokens_clone.set(0);
+                }
+                AppMessage::AgentExecutionCompleted => {
+                    is_processing_clone.set(false);
+                    operation_clone.set(String::new());
+                }
+                AppMessage::TokenUpdate { tokens } => {
+                    target_tokens_clone.set(tokens);
+                    token_animation_start_clone.set(std::time::Instant::now());
+                }
+                AppMessage::SystemMessage(_)
+                | AppMessage::UserMessage(_)
+                | AppMessage::InteractiveUpdate(_) => {
+                    // Ignored for status line
+                }
+            }
+        }
+    });
+
+    // Timer for elapsed and spinner
     let timer_tick = hooks.use_state(|| 0u64);
     let mut timer_tick_clone = timer_tick.clone();
-
     hooks.use_future(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -567,38 +694,54 @@ fn DynamicStatusLine(
         }
     });
 
-    // Only render content if processing
-    if !is_processing || operation.is_empty() {
-        return element! {
-            View {}
-        };
+    // Token animation loop using configured frame interval and easing
+    let mut current_tokens_anim = current_tokens.clone();
+    let token_animation_start_anim = token_animation_start.clone();
+    let token_animation_duration_anim = token_animation_duration.clone();
+    let target_tokens_anim = target_tokens.clone();
+    let anim_cfg = hooks.use_context::<AppContext>().ui_anim.clone();
+    hooks.use_future(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(anim_cfg.frame_interval_ms)).await;
+            let current = *current_tokens_anim.read();
+            let target = *target_tokens_anim.read();
+            if current < target {
+                let elapsed = token_animation_start_anim.read().elapsed();
+                let duration = *token_animation_duration_anim.read();
+                if elapsed < duration {
+                    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
+                    let eased_progress = apply_easing(anim_cfg.easing, progress);
+                    let new_tokens = ((target as f64) * eased_progress) as u32;
+                    let calculated = new_tokens.min(target);
+                    if calculated != current && calculated > current {
+                        current_tokens_anim.set(calculated);
+                    }
+                } else if current != target {
+                    current_tokens_anim.set(target);
+                }
+            }
+        }
+    });
+
+    if !*is_processing.read() || operation.read().is_empty() {
+        return element! { View {} };
     }
 
-    // Calculate elapsed time
-    let elapsed = start_time.elapsed().as_secs();
-
-    // Create animated spinner based on elapsed time
+    let elapsed = start_time.read().elapsed().as_secs();
     let spinner_chars = ["✻", "✦", "✧", "✶"];
     let spinner_index = ((elapsed / 1) % 4) as usize;
     let spinner = spinner_chars[spinner_index];
-
-    // Format the status line
     let status_text = format!(
         "{} {}… ({}s · ↑ {} tokens · esc to interrupt)",
-        spinner, operation, elapsed, tokens
+        spinner,
+        &*operation.read(),
+        elapsed,
+        *current_tokens.read(),
     );
 
     element! {
-        View(
-            padding_left: 1,
-            padding_right: 1,
-            margin_bottom: 1,
-        ) {
-            Text(
-                content: status_text,
-                color: Color::Yellow,
-                weight: Weight::Bold,
-            )
+        View(padding_left: 1, padding_right: 1, margin_bottom: 1) {
+            Text(content: status_text, color: Color::Yellow, weight: Weight::Bold)
         }
     }
 }
@@ -607,144 +750,24 @@ fn DynamicStatusLine(
 #[component]
 fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut system = hooks.use_context_mut::<SystemContext>();
-    let app_context = hooks.use_context::<AppContext>();
+    let _app_context = hooks.use_context::<AppContext>();
 
-    let input_value = hooks.use_state(|| String::new());
-    let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new()); // (role, content, message_id)
-    let is_processing = hooks.use_state(|| false);
+    // Only keep exit flag in App; other UI states live within components
     let should_exit = hooks.use_state(|| false);
 
-    // Dynamic status line state
-    let mut current_operation = hooks.use_state(|| String::new());
-    let mut operation_start_time = hooks.use_state(|| std::time::Instant::now());
-    let mut current_tokens = hooks.use_state(|| 0u32);
-
-    // Token animation state
-    let mut target_tokens = hooks.use_state(|| 0u32);
-    let token_animation_start = hooks.use_state(|| std::time::Instant::now());
-    let token_animation_duration = hooks.use_state(|| std::time::Duration::from_secs(3));
-    let _last_token_update = hooks.use_state(|| std::time::Instant::now());
-
-    // Use terminal width from context, with dynamic updates
-    let mut terminal_width = hooks.use_state(|| app_context.terminal_width);
-
-    // Update terminal width when terminal size changes
-    let (width, _height) = hooks.use_terminal_size();
-    if (width as usize) != *terminal_width.read() {
-        terminal_width.set(width as usize);
-    }
-
-    // Token animation logic (simplified - no timer updates)
-    let mut current_tokens_clone = current_tokens.clone();
-    let target_tokens_clone = target_tokens.clone();
-    let token_animation_start_clone = token_animation_start.clone();
-    let token_animation_duration_clone = token_animation_duration.clone();
-
-    hooks.use_future(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            // Handle token animation with easing
-            let current = *current_tokens_clone.read();
-            let target = *target_tokens_clone.read();
-
-            if current < target {
-                let elapsed = token_animation_start_clone.read().elapsed();
-                let duration = *token_animation_duration_clone.read();
-
-                if elapsed < duration {
-                    // Use easing function for smoother animation
-                    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
-                    // Ease-out cubic for natural deceleration
-                    let eased_progress = 1.0 - (1.0 - progress).powi(3);
-                    let new_tokens = ((target as f64) * eased_progress) as u32;
-                    let calculated_tokens = new_tokens.min(target);
-
-                    // Only update if there's a meaningful change
-                    if calculated_tokens != current && calculated_tokens > current {
-                        current_tokens_clone.set(calculated_tokens);
-                    }
-                } else {
-                    // Animation complete, set to target
-                    if current != target {
-                        current_tokens_clone.set(target);
-                    }
-                }
-            }
-        }
-    });
-
-    // Get config and project path from context
-    let config = app_context.config.clone();
-    let project_path = app_context.project_path.clone();
-
-    // Handle terminal events
+    // Handle terminal events for global exit
     hooks.use_terminal_events({
-        let mut input_value = input_value;
-        let mut messages = messages;
-        let mut is_processing = is_processing;
         let mut should_exit = should_exit;
-        move |event| {
-            match event {
-                TerminalEvent::Key(KeyEvent { code, kind, .. })
-                    if kind != KeyEventKind::Release =>
-                {
-                    match code {
-                        KeyCode::Char('q') if input_value.read().is_empty() => {
-                            should_exit.set(true);
-                        }
-                        KeyCode::Char(c) => {
-                            // Add character to input
-                            let mut current_input = input_value.read().clone();
-                            current_input.push(c);
-                            input_value.set(current_input);
-                        }
-                        KeyCode::Backspace => {
-                            // Remove last character
-                            let current = input_value.read().clone();
-                            if !current.is_empty() {
-                                input_value.set(current[..current.len() - 1].to_string());
-                            }
-                        }
-                        KeyCode::Enter => {
-                            let input = input_value.read().clone();
-                            if input.trim().is_empty() {
-                                return;
-                            }
-
-                            // Clear input immediately to prevent visual glitches
-                            input_value.set(String::new());
-
-                            // Add user message and update UI state in a single batch
-                            let mut current_messages = messages.read().clone();
-                            current_messages.push(("user".to_string(), input.clone(), None));
-                            messages.set(current_messages);
-
-                            // Set processing state and initialize dynamic status
-                            is_processing.set(true);
-                            current_operation.set("Considering".to_string());
-                            operation_start_time.set(std::time::Instant::now());
-                            current_tokens.set(0);
-                            target_tokens.set(0);
-
-                            // Execute agent task asynchronously
-                            spawn_ui_agent_task(
-                                input,
-                                config.clone(),
-                                project_path.clone(),
-                                messages.clone(),
-                                is_processing.clone(),
-                                current_operation.clone(),
-                                current_tokens.clone(),
-                                target_tokens.clone(),
-                                token_animation_start.clone(),
-                            );
-                        }
-                        _ => {}
+        move |event| match event {
+            TerminalEvent::Key(KeyEvent { code, kind, .. }) if kind != KeyEventKind::Release => {
+                match code {
+                    KeyCode::Char('q') => {
+                        should_exit.set(true);
                     }
+                    _ => {}
                 }
-                _ => {}
             }
+            _ => {}
         }
     });
 
@@ -770,33 +793,17 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 max_height: 100pct,         // Constrain height to prevent expansion
             ) {
                 // Header with TRAE logo - always visible
-                HeaderSection(
-                    key: "header-section-component",
-                    show_tips: messages.read().is_empty(),
-                )
+                HeaderSection(key: "header-section-component")
 
                 // Chat messages area - 支持文本换行，防止UI错乱
-                MessagesArea(
-                    key: "messages-area-component",
-                    messages: messages.read().clone(),
-                    terminal_width: *terminal_width.read(),
-                )
+                MessagesArea(key: "messages-area-component")
             }
 
             // Dynamic status line (isolated component to prevent parent re-rendering)
-            DynamicStatusLine(
-                key: "dynamic-status-line",
-                is_processing: *is_processing.read(),
-                operation: current_operation.read().clone(),
-                start_time: *operation_start_time.read(),
-                tokens: *current_tokens.read(),
-            )
+            DynamicStatusLine(key: "dynamic-status-line")
 
             // Fixed bottom area for input and status - this should never move
-            InputSection(
-                key: "input-section-component",
-                input_value: input_value.read().clone(),
-            )
+            InputSection(key: "input-section-component")
         }
     }
 }
@@ -804,14 +811,14 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 /// Custom output handler that forwards events and tracks tokens
 struct TokenTrackingOutputHandler {
     interactive_handler: InteractiveOutputHandler,
-    ui_sender: mpsc::UnboundedSender<AppMessage>,
+    ui_sender: broadcast::Sender<AppMessage>,
 }
 
 impl TokenTrackingOutputHandler {
     fn new(
         interactive_config: crate::output::interactive_handler::InteractiveOutputConfig,
         interactive_sender: mpsc::UnboundedSender<InteractiveMessage>,
-        ui_sender: mpsc::UnboundedSender<AppMessage>,
+        ui_sender: broadcast::Sender<AppMessage>,
     ) -> Self {
         Self {
             interactive_handler: InteractiveOutputHandler::new(
@@ -857,7 +864,7 @@ async fn execute_agent_task(
     task: String,
     config: Config,
     project_path: PathBuf,
-    ui_sender: mpsc::UnboundedSender<AppMessage>,
+    ui_sender: broadcast::Sender<AppMessage>,
 ) -> Result<()> {
     use crate::output::interactive_handler::InteractiveOutputConfig;
 
