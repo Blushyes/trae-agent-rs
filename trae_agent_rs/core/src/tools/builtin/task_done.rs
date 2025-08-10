@@ -47,8 +47,8 @@ impl Tool for TaskDoneTool {
         let summary: String = call.get_parameter("summary")?;
         let details: Option<String> = call.get_parameter("details").ok();
         
-        let mut result = format!("✅ Task Completed!\n\nSummary: {}", summary);
-        
+        let mut result = format!("Summary: {}", summary);
+
         if let Some(ref details) = details {
             result.push_str(&format!("\n\nDetails:\n{}", details));
         }

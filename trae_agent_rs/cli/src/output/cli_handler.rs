@@ -117,9 +117,8 @@ impl AgentOutput for CliOutputHandler {
                 debug!("📝 Task: {}", context.task);
                 debug!("📁 Project path: {}", context.project_path);
 
-                // In normal mode, just show the task execution header
-                println!("⏳ Executing task...");
-                println!("Task: {}", context.task);
+                // Don't show task execution header in normal mode
+                // The task execution will be shown through tool outputs
             }
             
             AgentEvent::ExecutionCompleted { context, success, summary } => {

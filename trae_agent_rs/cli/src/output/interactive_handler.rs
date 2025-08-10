@@ -104,11 +104,9 @@ impl AgentOutput for InteractiveOutputHandler {
         // Only delegate to CLI handler if we don't have a UI sender
         if let Some(ui_sender) = &self._ui_sender {
             match event {
-                AgentEvent::ExecutionStarted { context } => {
-                    // Use same format as CLI mode
-                    let _ = ui_sender.send(InteractiveMessage::SystemMessage("⏳ Executing task...".to_string()));
-                    let msg = format!("Task: {}", context.task);
-                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(msg));
+                AgentEvent::ExecutionStarted { context: _ } => {
+                    // Don't show task execution header in interactive mode
+                    // The task execution will be shown through tool outputs
                 }
 
                 AgentEvent::ExecutionCompleted { context, success: _, summary: _ } => {
