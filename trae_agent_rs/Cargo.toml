@@ -39,13 +39,13 @@ clap = { version = "4.0", features = ["derive", "env"] }
 
 # Terminal UI
 iocraft = "0.7"
-crossterm = "0.28"
+crossterm = "0.29"
 smol = "2.0"
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "5.0"
+dirs = "6.0"
 shellexpand = "3.0"
 
 # Configuration

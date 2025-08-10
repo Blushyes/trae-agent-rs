@@ -266,10 +266,10 @@ pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Resu
     Ok(())
 }
 
-/// TRAE ASCII Art Logo Component
+/// TRAE ASCII Art Logo Component (Memoized to prevent re-rendering)
 #[component]
-fn TraeLogo(mut _hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    // TODO need a beautiful logo!
+fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    // Static logo content - this won't change during the app lifecycle
     let logo = r#"
  ███
 ░░░███
@@ -286,6 +286,87 @@ fn TraeLogo(mut _hooks: Hooks) -> impl Into<AnyElement<'static>> {
             Text(
                 content: logo,
                 color: Color::Rgb { r: 0, g: 255, b: 127 }, // 使用更鲜艳的绿色渐变
+                weight: Weight::Bold,
+            )
+        }
+    }
+}
+
+#[derive(Clone, Props)]
+struct DynamicStatusLineProps {
+    is_processing: bool,
+    operation: String,
+    start_time: std::time::Instant,
+    tokens: u32,
+}
+
+impl Default for DynamicStatusLineProps {
+    fn default() -> Self {
+        Self {
+            is_processing: false,
+            operation: String::new(),
+            start_time: std::time::Instant::now(),
+            tokens: 0,
+        }
+    }
+}
+
+/// Dynamic Status Line Component (Isolated to prevent parent re-rendering)
+#[component]
+fn DynamicStatusLine(
+    mut hooks: Hooks,
+    props: &DynamicStatusLineProps
+) -> impl Into<AnyElement<'static>> {
+    let is_processing = props.is_processing;
+    let operation = props.operation.clone();
+    let start_time = props.start_time;
+    let tokens = props.tokens;
+
+    // IMPORTANT: Always call hooks in the same order, regardless of conditions
+    // Internal timer for this component only
+    let timer_tick = hooks.use_state(|| 0u64);
+    let mut timer_tick_clone = timer_tick.clone();
+
+    hooks.use_future(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            timer_tick_clone.set(timer_tick_clone.get() + 1);
+        }
+    });
+
+    // Only render content if processing
+    if !is_processing || operation.is_empty() {
+        return element! {
+            View {}
+        };
+    }
+
+    // Calculate elapsed time
+    let elapsed = start_time.elapsed().as_secs();
+
+    // Create animated spinner based on elapsed time
+    let spinner_chars = ["✻", "✦", "✧", "✶"];
+    let spinner_index = ((elapsed / 1) % 4) as usize;
+    let spinner = spinner_chars[spinner_index];
+
+    // Format the status line
+    let status_text = format!(
+        "{} {}… ({}s · ↑ {} tokens · esc to interrupt)",
+        spinner,
+        operation,
+        elapsed,
+        tokens
+    );
+
+    element! {
+        View(
+            padding_left: 1,
+            padding_right: 1,
+            margin_bottom: 1,
+        ) {
+            Text(
+                content: status_text,
+                color: Color::Yellow,
                 weight: Weight::Bold,
             )
         }
@@ -312,63 +393,41 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let token_animation_duration = hooks.use_state(|| std::time::Duration::from_secs(3));
     let _last_token_update = hooks.use_state(|| std::time::Instant::now());
 
-    // Timer for updating the status line and token animation
-    let timer_tick = hooks.use_state(|| 0u64);
-
-    // Start timer for both time updates and token animation
-    let mut timer_tick_clone = timer_tick.clone();
-    let is_processing_clone = is_processing.clone();
+    // Token animation logic (simplified - no timer updates)
     let mut current_tokens_clone = current_tokens.clone();
     let target_tokens_clone = target_tokens.clone();
     let token_animation_start_clone = token_animation_start.clone();
     let token_animation_duration_clone = token_animation_duration.clone();
 
     hooks.use_future(async move {
-        let mut tick_counter = 0u64;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await; // Update every 50ms for smoother animation
-            if *is_processing_clone.read() {
-                tick_counter += 1;
-                let mut should_update = false;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-                // Update timer every second (20 * 50ms = 1000ms)
-                if tick_counter % 20 == 0 {
-                    should_update = true; // Force update for time display
-                }
+            // Handle token animation with easing
+            let current = *current_tokens_clone.read();
+            let target = *target_tokens_clone.read();
 
-                // Handle token animation with easing
-                let current = *current_tokens_clone.read();
-                let target = *target_tokens_clone.read();
+            if current < target {
+                let elapsed = token_animation_start_clone.read().elapsed();
+                let duration = *token_animation_duration_clone.read();
 
-                if current < target {
-                    let elapsed = token_animation_start_clone.read().elapsed();
-                    let duration = *token_animation_duration_clone.read();
+                if elapsed < duration {
+                    // Use easing function for smoother animation
+                    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
+                    // Ease-out cubic for natural deceleration
+                    let eased_progress = 1.0 - (1.0 - progress).powi(3);
+                    let new_tokens = ((target as f64) * eased_progress) as u32;
+                    let calculated_tokens = new_tokens.min(target);
 
-                    if elapsed < duration {
-                        // Use easing function for smoother animation
-                        let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
-                        // Ease-out cubic for natural deceleration
-                        let eased_progress = 1.0 - (1.0 - progress).powi(3);
-                        let new_tokens = ((target as f64) * eased_progress) as u32;
-                        let calculated_tokens = new_tokens.min(target);
-
-                        // Only update if there's a meaningful change (reduce micro-updates)
-                        if calculated_tokens != current && calculated_tokens > current {
-                            current_tokens_clone.set(calculated_tokens);
-                            should_update = true;
-                        }
-                    } else {
-                        // Animation complete, set to target
-                        if current != target {
-                            current_tokens_clone.set(target);
-                            should_update = true;
-                        }
+                    // Only update if there's a meaningful change
+                    if calculated_tokens != current && calculated_tokens > current {
+                        current_tokens_clone.set(calculated_tokens);
                     }
-                }
-
-                // Update timer to trigger re-render
-                if should_update {
-                    timer_tick_clone.set(timer_tick_clone.get() + 1);
+                } else {
+                    // Animation complete, set to target
+                    if current != target {
+                        current_tokens_clone.set(target);
+                    }
                 }
             }
         }
@@ -564,37 +623,13 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 }
             }
 
-            // Dynamic status line (only shown when processing)
-            #(if *is_processing.read() {
-                let elapsed = operation_start_time.read().elapsed().as_secs();
-                let operation = current_operation.read().clone();
-                let tokens = *current_tokens.read();
-
-                // Create animated spinner based on elapsed time
-                let spinner_chars = ["✻", "✦", "✧", "✶"];
-                let spinner_index = ((elapsed / 1) % 4) as usize;
-                let spinner = spinner_chars[spinner_index];
-
-                // Use a single text element to reduce rendering overhead
-                let status_text = format!("{} {}… ({}s · ↑ {} tokens · esc to interrupt)",
-                        spinner, operation, elapsed, tokens);
-
-                Some(element! {
-                    View(
-                        padding_left: 1,
-                        padding_right: 1,
-                        margin_bottom: 1,
-                    ) {
-                        Text(
-                            content: status_text,
-                            color: Color::Yellow,
-                            weight: Weight::Bold,
-                        )
-                    }
-                })
-            } else {
-                None
-            })
+            // Dynamic status line (isolated component to prevent parent re-rendering)
+            DynamicStatusLine(
+                is_processing: *is_processing.read(),
+                operation: current_operation.read().clone(),
+                start_time: *operation_start_time.read(),
+                tokens: *current_tokens.read(),
+            )
 
             // Fixed bottom area for input and status - this should never move
             View(
