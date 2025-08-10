@@ -6,7 +6,7 @@ use iocraft::prelude::*;
 use std::path::PathBuf;
 use tokio::sync::{broadcast, mpsc};
 use trae_agent_core::Config;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Easing options for token animation
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +76,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
                     let mut char_width = 0;
 
                     for ch in word.chars() {
-                        let ch_width = UnicodeWidthStr::width(ch.to_string().as_str());
+                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
                         if char_width + ch_width > max_width && !char_line.is_empty() {
                             lines.push(char_line);
                             char_line = ch.to_string();
@@ -406,13 +406,18 @@ fn MessagesArea(mut hooks: Hooks, _props: &MessagesAreaProps) -> impl Into<AnyEl
     let (width, _height) = hooks.use_terminal_size();
     // Get current terminal width and reserve space for padding/borders
     // Subtract more space to prevent line wrapping issues
-    let terminal_width = if width as usize > 0 {
-        (width as usize).saturating_sub(12) // Reserve 12 chars for padding, borders, and safety margin
+    let raw_width = if width as usize > 0 {
+        width as usize
     } else {
-        get_terminal_width().saturating_sub(12)
+        crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80)
     };
-    // Ensure minimum usable width
-    let terminal_width = std::cmp::max(terminal_width, 30);
+
+    // Reserve space but be more conservative - only subtract 4-6 chars for basic padding
+    let terminal_width = raw_width.saturating_sub(6);
+    // Ensure reasonable minimum width
+    let terminal_width = std::cmp::max(terminal_width, 60);
 
     // Subscribe to UI events and update local messages state
     let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
@@ -773,7 +778,7 @@ fn TraeApp() -> impl Into<AnyElement<'static>> {
             }
 
             // Dynamic status line (isolated component to prevent parent re-rendering)
-            DynamicStatusLine(key: "dynamic-status-line")
+            // DynamicStatusLine(key: "dynamic-status-line")
 
             // Fixed bottom area for input and status - this should never move
             InputSection(key: "input-section-component")
