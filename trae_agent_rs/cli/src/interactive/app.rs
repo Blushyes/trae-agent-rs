@@ -333,194 +333,7 @@ impl Default for DynamicStatusLineProps {
     }
 }
 
-#[derive(Clone, Props)]
-struct HeaderSectionProps {}
-
-impl Default for HeaderSectionProps {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-/// Header Section Component - Contains logo and tips
-#[component]
-fn HeaderSection(mut hooks: Hooks, _props: &HeaderSectionProps) -> impl Into<AnyElement<'static>> {
-    // Local state: tips should be shown until the first UI message appears
-    let show_tips = hooks.use_state(|| true);
-
-    // Subscribe to UI broadcast and hide tips when any UI message appears
-    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
-    let mut show_tips_clone = show_tips.clone();
-    hooks.use_future(async move {
-        let mut rx = ui_sender.subscribe();
-        while let Ok(msg) = rx.recv().await {
-            if app_message_to_ui_message(msg).is_some() {
-                if *show_tips_clone.read() {
-                    show_tips_clone.set(false);
-                }
-            }
-        }
-    });
-
-    element! {
-        View(
-            key: "header-section",
-            margin_bottom: 1,
-            flex_direction: FlexDirection::Column,
-            flex_shrink: 0.0, // Prevent logo from shrinking
-        ) {
-            View(key: "logcontanier", margin_bottom: 1) {
-                TraeLogo(key: "static-logo")
-            }
-            // Tips (only show when no messages)
-            #(if *show_tips.read() {
-                Some(element! {
-                    View(
-                        flex_direction: FlexDirection::Column,
-                        margin_bottom: 1,
-                    ) {
-                        Text(
-                            content: "Tips for getting started:",
-                            color: Color::White,
-                        )
-                        Text(
-                            content: "1. Ask questions, edit files, or run commands.",
-                            color: Color::White,
-                        )
-                        Text(
-                            content: "2. Be specific for the best results.",
-                            color: Color::White,
-                        )
-                        Text(
-                            content: "3. /help for more information.",
-                            color: Color::White,
-                        )
-                    }
-                })
-            } else {
-                None
-            })
-        }
-    }
-}
-
-#[derive(Clone, Props)]
-struct MessagesAreaProps {}
-
-impl Default for MessagesAreaProps {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-/// Messages Area Component - Chat messages with text wrapping
-#[component]
-fn MessagesArea(mut hooks: Hooks, _props: &MessagesAreaProps) -> impl Into<AnyElement<'static>> {
-    // Local state: messages and terminal width
-    let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new());
-
-    let (width, _height) = hooks.use_terminal_size();
-    // Get current terminal width and reserve space for padding/borders
-    // Subtract more space to prevent line wrapping issues
-    let raw_width = if width as usize > 0 {
-        width as usize
-    } else {
-        crossterm::terminal::size()
-            .map(|(w, _)| w as usize)
-            .unwrap_or(80)
-    };
-
-    // Reserve space but be more conservative - only subtract 4-6 chars for basic padding
-    let terminal_width = raw_width.saturating_sub(6);
-    // Ensure reasonable minimum width
-    let terminal_width = std::cmp::max(terminal_width, 60);
-
-    // Subscribe to UI events and update local messages state
-    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
-    let mut messages_clone = messages.clone();
-    hooks.use_future(async move {
-        let mut rx = ui_sender.subscribe();
-        while let Ok(app_message) = rx.recv().await {
-            if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
-                let mut current = messages_clone.read().clone();
-                if let Some(msg_id) = message_id {
-                    if let Some(pos) = current
-                        .iter()
-                        .position(|(_, _, id)| id.as_ref() == Some(&msg_id))
-                    {
-                        current[pos] = (role, content, Some(msg_id));
-                    } else {
-                        current.push((role, content, Some(msg_id)));
-                    }
-                } else {
-                    current.push((role, content, None));
-                }
-                messages_clone.set(current);
-            }
-        }
-    });
-
-    element! {
-        View(
-            key: "messages-container",
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::Scroll, // Enable scrolling for long content
-            min_height: 0, // Prevent flex item from growing beyond container
-            position: Position::Relative, // Stable positioning
-            flex_shrink: 1.0, // Allow shrinking when needed
-        ) {
-            #(messages.read().iter().enumerate().map(|(idx, (role, content, message_id))| {
-                let wrapped_lines = wrap_text(content, terminal_width);
-
-                // 使用message_id或者索引作为key
-                let msg_key = message_id.as_ref().map(|id| id.clone()).unwrap_or_else(|| idx.to_string());
-
-                if role == "user" {
-                    element! {
-                        View(
-                            key: format!("user-msg-{}", msg_key),
-                            width: 100pct,
-                            margin_bottom: 1,
-                            flex_direction: FlexDirection::Column,
-                        ) {
-                            #(wrapped_lines.iter().enumerate().map(|(i, line)| {
-                                element! {
-                                    View(key: format!("user-line-{}-{}", msg_key, i), width: 100pct) {
-                                        Text(
-                                            content: if i == 0 { format!("> {}", line) } else { format!("  {}", line) },
-                                            color: Color::White,
-                                        )
-                                    }
-                                }
-                            }))
-                        }
-                    }
-                } else {
-                    element! {
-                        View(
-                            key: format!("assistant-msg-{}", msg_key),
-                            width: 100pct,
-                            margin_bottom: 1,
-                            flex_direction: FlexDirection::Column,
-                        ) {
-                            #(wrapped_lines.iter().enumerate().map(|(i, line)| {
-                                element! {
-                                    View(key: format!("assistant-line-{}-{}", msg_key, i), width: 100pct) {
-                                        Text(
-                                            content: line,
-                                            color: Color::White,
-                                        )
-                                    }
-                                }
-                            }))
-                        }
-                    }
-                }
-            }))
-        }
-    }
-}
+// HeaderSection and MessagesArea components are now integrated into TraeApp
 
 #[derive(Clone, Props)]
 struct InputSectionProps {}
@@ -768,7 +581,136 @@ fn DynamicStatusLine(
 
 /// Main TRAE Interactive Application Component
 #[component]
-fn TraeApp() -> impl Into<AnyElement<'static>> {
+fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    // Get stdout handle for header and messages output
+    let (stdout, _stderr) = hooks.use_output();
+
+    // Local state for header and messages
+    let show_tips = hooks.use_state(|| true);
+    let header_rendered = hooks.use_state(|| false);
+    let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new());
+
+    let (width, _height) = hooks.use_terminal_size();
+    // Get current terminal width and reserve space for padding/borders
+    let raw_width = if width as usize > 0 {
+        width as usize
+    } else {
+        crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80)
+    };
+    let terminal_width = raw_width.saturating_sub(6);
+    let terminal_width = std::cmp::max(terminal_width, 60);
+
+    // Get UI sender for both header and messages
+    let ui_sender = hooks.use_context::<AppContext>().ui_sender.clone();
+
+    // Subscribe to UI events for header tips management
+    let ui_sender_tips = ui_sender.clone();
+    let mut show_tips_clone = show_tips.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender_tips.subscribe();
+        while let Ok(msg) = rx.recv().await {
+            if app_message_to_ui_message(msg).is_some() {
+                if *show_tips_clone.read() {
+                    show_tips_clone.set(false);
+                }
+            }
+        }
+    });
+
+    // Output header to stdout when component mounts
+    let stdout_clone = stdout.clone();
+    let show_tips_for_output = show_tips.clone();
+    let mut header_rendered_clone = header_rendered.clone();
+    hooks.use_future(async move {
+        if !*header_rendered_clone.read() {
+            // Output TRAE logo line by line
+            for line in TRAE_LOGO.lines() {
+                if !line.trim().is_empty() {
+                    stdout_clone.println(line);
+                }
+            }
+            stdout_clone.println(""); // Empty line after logo
+
+            // Output tips if they should be shown
+            if *show_tips_for_output.read() {
+                stdout_clone.println("Tips for getting started:");
+                stdout_clone.println("1. Ask questions, edit files, or run commands.");
+                stdout_clone.println("2. Be specific for the best results.");
+                stdout_clone.println("3. /help for more information.");
+                stdout_clone.println(""); // Empty line for spacing
+            }
+
+            header_rendered_clone.set(true);
+        }
+    });
+
+    // Subscribe to UI events for messages output
+    let ui_sender_messages = ui_sender.clone();
+    let mut messages_clone = messages.clone();
+    let stdout_messages = stdout.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender_messages.subscribe();
+        while let Ok(app_message) = rx.recv().await {
+            if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
+                let mut current = messages_clone.read().clone();
+                let is_new_message = if let Some(msg_id) = &message_id {
+                    if let Some(pos) = current
+                        .iter()
+                        .position(|(_, _, id)| id.as_ref() == Some(msg_id))
+                    {
+                        current[pos] = (role.clone(), content.clone(), Some(msg_id.clone()));
+                        false // Updated existing message
+                    } else {
+                        current.push((role.clone(), content.clone(), Some(msg_id.clone())));
+                        true // New message
+                    }
+                } else {
+                    current.push((role.clone(), content.clone(), None));
+                    true // New message
+                };
+
+                // Output messages to stdout
+                // For new messages, output normally
+                // For updated messages (like tool status changes), we need to handle the replacement
+                if is_new_message {
+                    let wrapped_lines = wrap_text(&content, terminal_width);
+                    if role == "user" {
+                        for (i, line) in wrapped_lines.iter().enumerate() {
+                            if i == 0 {
+                                stdout_messages.println(format!("> {}", line));
+                            } else {
+                                stdout_messages.println(format!("  {}", line));
+                            }
+                        }
+                    } else {
+                        for line in wrapped_lines.iter() {
+                            stdout_messages.println(line);
+                        }
+                    }
+                    stdout_messages.println(""); // Empty line for spacing
+                } else {
+                    // This is an updated message (e.g., tool status change from executing to completed)
+                    // We need to replace the previous line with the new content
+                    // Since we can't reliably mix print! with iocraft's output system,
+                    // we'll include the ANSI escape codes in the content itself
+                    let wrapped_lines = wrap_text(&content, terminal_width);
+                    for (i, line) in wrapped_lines.iter().enumerate() {
+                        if i == 0 {
+                            // For the first line, prepend ANSI codes to move up and clear
+                            stdout_messages.println(format!("\x1b[1A\x1b[2K\r{}", line));
+                        } else {
+                            stdout_messages.println(line);
+                        }
+                    }
+                }
+
+                messages_clone.set(current);
+            }
+        }
+    });
+
     element! {
         View(
             key: "main-container",
@@ -776,14 +718,9 @@ fn TraeApp() -> impl Into<AnyElement<'static>> {
             height: 100pct,
             width: 100pct,
             padding: 1,
-            position: Position::Relative, // Ensure stable positioning
+            position: Position::Relative,
+            justify_content: JustifyContent::End, // Push content to bottom
         ) {
-            // Header with TRAE logo - always visible
-            HeaderSection(key: "header-section-component")
-
-            // Chat messages area - 支持文本换行，防止UI错乱
-            MessagesArea(key: "messages-area-component")
-
             // Dynamic status line (isolated component to prevent parent re-rendering)
             DynamicStatusLine(key: "dynamic-status-line")
 
