@@ -1,10 +1,10 @@
 //! Output abstraction layer for the Trae Agent core
-//! 
+//!
 //! This module provides an abstract interface for outputting agent execution information,
 //! allowing different implementations for CLI, API, logging, etc.
 
-use crate::tools::{ToolCall, ToolResult};
-use serde::{Deserialize, Serialize};
+use crate::tools::{ ToolCall, ToolResult };
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use async_trait::async_trait;
 
@@ -15,7 +15,10 @@ pub struct NullOutput;
 
 #[async_trait]
 impl AgentOutput for NullOutput {
-    async fn emit_event(&self, _event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn emit_event(
+        &self,
+        _event: AgentEvent
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }
@@ -138,6 +141,10 @@ pub enum AgentEvent {
         step_number: usize,
         thinking: String,
     },
+    /// Token usage updated (emitted after each LLM call)
+    TokenUsageUpdated {
+        token_usage: TokenUsage,
+    },
     /// General message or log
     Message {
         level: MessageLevel,
@@ -160,32 +167,47 @@ pub enum MessageLevel {
 #[async_trait]
 pub trait AgentOutput: Send + Sync {
     /// Emit an agent event
-    async fn emit_event(&self, event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    
+    async fn emit_event(
+        &self,
+        event: AgentEvent
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
     /// Emit a message with specified level
-    async fn emit_message(&self, level: MessageLevel, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn emit_message(
+        &self,
+        level: MessageLevel,
+        content: &str
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_event(AgentEvent::Message {
             level,
             content: content.to_string(),
             metadata: HashMap::new(),
         }).await
     }
-    
+
     /// Emit debug message
     async fn debug(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Debug, content).await
     }
-    
+
+    /// Emit token usage update
+    async fn emit_token_update(
+        &self,
+        token_usage: TokenUsage
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.emit_event(AgentEvent::TokenUsageUpdated { token_usage }).await
+    }
+
     /// Emit info message
     async fn info(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Info, content).await
     }
-    
+
     /// Emit warning message
     async fn warning(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Warning, content).await
     }
-    
+
     /// Emit error message
     async fn error(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Error, content).await
@@ -195,12 +217,12 @@ pub trait AgentOutput: Send + Sync {
     async fn normal(&self, content: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_message(MessageLevel::Normal, content).await
     }
-    
+
     /// Check if this output handler supports real-time updates
     fn supports_realtime_updates(&self) -> bool {
         false
     }
-    
+
     /// Flush any buffered output (for implementations that buffer)
     async fn flush(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
@@ -212,7 +234,7 @@ pub trait ToolExecutionInfoBuilder {
     fn create_tool_execution_info(
         tool_call: &ToolCall,
         status: ToolExecutionStatus,
-        result: Option<&ToolResult>,
+        result: Option<&ToolResult>
     ) -> ToolExecutionInfo;
 }
 
@@ -220,10 +242,12 @@ impl ToolExecutionInfoBuilder for ToolExecutionInfo {
     fn create_tool_execution_info(
         tool_call: &ToolCall,
         status: ToolExecutionStatus,
-        result: Option<&ToolResult>,
+        result: Option<&ToolResult>
     ) -> ToolExecutionInfo {
         let parameters = if let serde_json::Value::Object(map) = &tool_call.parameters {
-            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            map.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
         } else {
             let mut map = HashMap::new();
             map.insert("raw_parameters".to_string(), tool_call.parameters.clone());

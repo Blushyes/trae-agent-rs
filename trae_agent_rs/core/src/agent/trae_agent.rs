@@ -4,7 +4,15 @@ use crate::agent::{ Agent, AgentExecution, AgentResult };
 use crate::agent::prompt::{ build_system_prompt_with_context, build_user_message };
 use crate::config::{ AgentConfig, Config };
 
-use crate::output::{AgentOutput, AgentEvent, AgentExecutionContext, ToolExecutionInfo, ToolExecutionInfoBuilder, ToolExecutionStatus, TokenUsage};
+use crate::output::{
+    AgentOutput,
+    AgentEvent,
+    AgentExecutionContext,
+    ToolExecutionInfo,
+    ToolExecutionInfoBuilder,
+    ToolExecutionStatus,
+    TokenUsage,
+};
 use crate::error::{ AgentError, Result };
 use crate::llm::{ LlmClient, LlmMessage, LlmResponse, ChatOptions };
 use crate::tools::{ ToolExecutor, ToolRegistry };
@@ -29,7 +37,11 @@ pub struct TraeAgent {
 
 impl TraeAgent {
     /// Create a new TraeAgent with output handler
-    pub async fn new_with_output(agent_config: AgentConfig, config: Config, output: Box<dyn AgentOutput>) -> Result<Self> {
+    pub async fn new_with_output(
+        agent_config: AgentConfig,
+        config: Config,
+        output: Box<dyn AgentOutput>
+    ) -> Result<Self> {
         // Get model configuration
         let model_config = config
             .get_model(&agent_config.model)
@@ -220,10 +232,10 @@ impl TraeAgent {
 
     /// Execute a single step of the agent
     async fn execute_step(&mut self, step: usize, project_path: &Path) -> Result<bool> {
-
         // Prepare messages - only add system prompt if conversation history doesn't start with one
         let mut messages = Vec::new();
-        let needs_system_prompt = self.conversation_history.is_empty() ||
+        let needs_system_prompt =
+            self.conversation_history.is_empty() ||
             !matches!(self.conversation_history[0].role, crate::llm::MessageRole::System);
 
         if needs_system_prompt {
@@ -255,7 +267,11 @@ impl TraeAgent {
         });
 
         // Make LLM request (non-streaming)
-        let response = self.llm_client.chat_completion(messages, Some(tool_definitions), options).await?;
+        let response = self.llm_client.chat_completion(
+            messages,
+            Some(tool_definitions),
+            options
+        ).await?;
 
         // Update token usage
         if let Some(usage) = &response.usage {
@@ -263,6 +279,13 @@ impl TraeAgent {
                 context.token_usage.input_tokens += usage.prompt_tokens;
                 context.token_usage.output_tokens += usage.completion_tokens;
                 context.token_usage.total_tokens += usage.total_tokens;
+
+                // Emit token update event immediately after LLM call
+                self.output
+                    .emit_token_update(context.token_usage.clone()).await
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: Failed to emit token update event: {}", e);
+                    });
             }
         }
 
@@ -299,14 +322,16 @@ impl TraeAgent {
                     let tool_info = ToolExecutionInfo::create_tool_execution_info(
                         &tool_call,
                         ToolExecutionStatus::Executing,
-                        None,
+                        None
                     );
 
-                    self.output.emit_event(AgentEvent::ToolExecutionStarted {
-                        tool_info: tool_info.clone(),
-                    }).await.unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to emit tool execution started event: {}", e);
-                    });
+                    self.output
+                        .emit_event(AgentEvent::ToolExecutionStarted {
+                            tool_info: tool_info.clone(),
+                        }).await
+                        .unwrap_or_else(|e| {
+                            eprintln!("Warning: Failed to emit tool execution started event: {}", e);
+                        });
 
                     // Record tool call
                     if let Some(recorder) = &self.trajectory_recorder {
@@ -319,15 +344,21 @@ impl TraeAgent {
                     // Create completed tool execution info and emit completed event
                     let completed_tool_info = ToolExecutionInfo::create_tool_execution_info(
                         &tool_call,
-                        if tool_result.success { ToolExecutionStatus::Success } else { ToolExecutionStatus::Error },
-                        Some(&tool_result),
+                        if tool_result.success {
+                            ToolExecutionStatus::Success
+                        } else {
+                            ToolExecutionStatus::Error
+                        },
+                        Some(&tool_result)
                     );
 
-                    self.output.emit_event(AgentEvent::ToolExecutionCompleted {
-                        tool_info: completed_tool_info,
-                    }).await.unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to emit tool execution completed event: {}", e);
-                    });
+                    self.output
+                        .emit_event(AgentEvent::ToolExecutionCompleted {
+                            tool_info: completed_tool_info,
+                        }).await
+                        .unwrap_or_else(|e| {
+                            eprintln!("Warning: Failed to emit tool execution completed event: {}", e);
+                        });
 
                     // Handle special tool behaviors
                     if name == "sequentialthinking" {
@@ -335,26 +366,34 @@ impl TraeAgent {
                         if let Some(data) = &tool_result.data {
                             if let Some(thought) = data.get("thought") {
                                 if let Some(thought_str) = thought.as_str() {
-                                    self.output.emit_event(AgentEvent::AgentThinking {
-                                        step_number: step,
-                                        thinking: thought_str.to_string(),
-                                    }).await.unwrap_or_else(|e| {
-                                        eprintln!("Warning: Failed to emit thinking event: {}", e);
-                                    });
+                                    self.output
+                                        .emit_event(AgentEvent::AgentThinking {
+                                            step_number: step,
+                                            thinking: thought_str.to_string(),
+                                        }).await
+                                        .unwrap_or_else(|e| {
+                                            eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                        });
                                 }
                             }
                         } else {
                             // Fallback: try to extract from content
                             if let Some(start) = tool_result.content.find("Thought: ") {
                                 let thought_start = start + "Thought: ".len();
-                                if let Some(end) = tool_result.content[thought_start..].find("\n\n") {
-                                    let thought = &tool_result.content[thought_start..thought_start + end];
-                                    self.output.emit_event(AgentEvent::AgentThinking {
-                                        step_number: step,
-                                        thinking: thought.to_string(),
-                                    }).await.unwrap_or_else(|e| {
-                                        eprintln!("Warning: Failed to emit thinking event: {}", e);
-                                    });
+                                if
+                                    let Some(end) =
+                                        tool_result.content[thought_start..].find("\n\n")
+                                {
+                                    let thought =
+                                        &tool_result.content[thought_start..thought_start + end];
+                                    self.output
+                                        .emit_event(AgentEvent::AgentThinking {
+                                            step_number: step,
+                                            thinking: thought.to_string(),
+                                        }).await
+                                        .unwrap_or_else(|e| {
+                                            eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                        });
                                 }
                             }
                         }
@@ -408,8 +447,6 @@ impl TraeAgent {
         // If no tool calls, we're done for this step
         Ok(false)
     }
-
-
 }
 
 #[async_trait]
@@ -439,7 +476,11 @@ impl Agent for TraeAgent {
 
 impl TraeAgent {
     /// Execute a task with project context (like Python version)
-    pub async fn execute_task_with_context(&mut self, task: &str, project_path: &Path) -> AgentResult<AgentExecution> {
+    pub async fn execute_task_with_context(
+        &mut self,
+        task: &str,
+        project_path: &Path
+    ) -> AgentResult<AgentExecution> {
         let start_time = Instant::now();
 
         // Initialize conversation with system prompt and user message with context
@@ -460,11 +501,13 @@ impl TraeAgent {
 
         // Emit execution started event
         if let Some(context) = &self.execution_context {
-            self.output.emit_event(AgentEvent::ExecutionStarted {
-                context: context.clone(),
-            }).await.unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to emit execution started event: {}", e);
-            });
+            self.output
+                .emit_event(AgentEvent::ExecutionStarted {
+                    context: context.clone(),
+                }).await
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to emit execution started event: {}", e);
+                });
         }
 
         self.current_task_displayed = true;
@@ -521,11 +564,13 @@ impl TraeAgent {
                     }
 
                     let duration = start_time.elapsed().as_millis() as u64;
-                    return Ok(AgentExecution::failure(
-                        format!("Error in step {}: {}", step, e),
-                        step,
-                        duration
-                    ));
+                    return Ok(
+                        AgentExecution::failure(
+                            format!("Error in step {}: {}", step, e),
+                            step,
+                            duration
+                        )
+                    );
                 }
             }
         }
@@ -562,29 +607,35 @@ impl TraeAgent {
                 format!("Task incomplete after {} steps", step)
             };
 
-            self.output.emit_event(AgentEvent::ExecutionCompleted {
-                context: context.clone(),
-                success: task_completed,
-                summary: summary.clone(),
-            }).await.unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to emit execution completed event: {}", e);
-            });
+            self.output
+                .emit_event(AgentEvent::ExecutionCompleted {
+                    context: context.clone(),
+                    success: task_completed,
+                    summary: summary.clone(),
+                }).await
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to emit execution completed event: {}", e);
+                });
         }
 
         let duration_ms = duration.as_millis() as u64;
 
         if task_completed {
-            Ok(AgentExecution::success(
-                "Task completed successfully".to_string(),
-                step,
-                duration_ms
-            ))
+            Ok(
+                AgentExecution::success(
+                    "Task completed successfully".to_string(),
+                    step,
+                    duration_ms
+                )
+            )
         } else {
-            Ok(AgentExecution::failure(
-                format!("Task incomplete after {} steps", step),
-                step,
-                duration_ms
-            ))
+            Ok(
+                AgentExecution::failure(
+                    format!("Task incomplete after {} steps", step),
+                    step,
+                    duration_ms
+                )
+            )
         }
     }
 }

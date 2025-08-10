@@ -1,19 +1,15 @@
 //! CLI output handler implementation
 
-use trae_agent_core::output::{
-    AgentOutput, AgentEvent, ToolExecutionStatus, MessageLevel
-};
-use super::formatters::{ToolFormatter, DiffFormatter};
+use trae_agent_core::output::{ AgentOutput, AgentEvent, ToolExecutionStatus, MessageLevel };
+use super::formatters::{ ToolFormatter, DiffFormatter };
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn, error};
+use tracing::{ debug, info, warn, error };
 
 /// Tools that should not display status indicators
-static SILENT_TOOLS: &[&str] = &[
-    "sequentialthinking",
-];
+static SILENT_TOOLS: &[&str] = &["sequentialthinking"];
 
 /// Check if a tool should be silent (no status display)
 fn is_silent_tool(tool_name: &str) -> bool {
@@ -54,20 +50,23 @@ impl CliOutputHandler {
             active_tools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
+
     /// Create with default configuration
     pub fn default() -> Self {
         Self::new(CliOutputConfig::default())
     }
-    
+
     /// Handle real-time tool execution updates
-    async fn handle_tool_update(&self, tool_info: &trae_agent_core::output::ToolExecutionInfo) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle_tool_update(
+        &self,
+        tool_info: &trae_agent_core::output::ToolExecutionInfo
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.realtime_updates {
             return Ok(());
         }
-        
+
         let mut active_tools = self.active_tools.lock().await;
-        
+
         match tool_info.status {
             ToolExecutionStatus::Executing => {
                 // Show initial executing status
@@ -80,19 +79,22 @@ impl CliOutputHandler {
                     // Clear current line and move cursor up to overwrite the executing line
                     print!("\x1b[1A\x1b[2K\r");
                     println!("{}", self.tool_formatter.format_tool_status(tool_info));
-                    
+
                     // Show result content if available
                     if let Some(result_display) = self.tool_formatter.format_tool_result(tool_info) {
                         println!("{}", result_display);
                     }
-                    
+
                     // Show diff for edit tools
                     if tool_info.tool_name == "str_replace_based_edit_tool" {
-                        if let Some(diff_display) = self.diff_formatter.format_edit_result(tool_info) {
+                        if
+                            let Some(diff_display) =
+                                self.diff_formatter.format_edit_result(tool_info)
+                        {
                             println!("{}", diff_display);
                         }
                     }
-                    
+
                     active_tools.remove(&tool_info.execution_id);
                 } else {
                     // Tool wasn't tracked, just show the final status
@@ -103,14 +105,17 @@ impl CliOutputHandler {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
 
 #[async_trait]
 impl AgentOutput for CliOutputHandler {
-    async fn emit_event(&self, event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn emit_event(
+        &self,
+        event: AgentEvent
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match event {
             AgentEvent::ExecutionStarted { context } => {
                 debug!("🚀 Starting task execution...");
@@ -120,7 +125,7 @@ impl AgentOutput for CliOutputHandler {
                 // Don't show task execution header in normal mode
                 // The task execution will be shown through tool outputs
             }
-            
+
             AgentEvent::ExecutionCompleted { context, success, summary } => {
                 if success {
                     debug!("✅ Task Completed!");
@@ -137,21 +142,23 @@ impl AgentOutput for CliOutputHandler {
                 // Show token usage if available
                 let token_usage = &context.token_usage;
                 if token_usage.total_tokens > 0 {
-                    println!("🪙 Tokens: {} input + {} output = {} total",
+                    println!(
+                        "🪙 Tokens: {} input + {} output = {} total",
                         token_usage.input_tokens,
                         token_usage.output_tokens,
-                        token_usage.total_tokens);
+                        token_usage.total_tokens
+                    );
                 }
             }
-            
+
             AgentEvent::StepStarted { step_info } => {
                 debug!("🔄 Step {}: {}", step_info.step_number, step_info.task);
             }
-            
+
             AgentEvent::StepCompleted { step_info: _ } => {
                 // Usually handled by individual tool completions
             }
-            
+
             AgentEvent::ToolExecutionStarted { tool_info } => {
                 // Skip status display for silent tools
                 if !is_silent_tool(&tool_info.tool_name) {
@@ -204,12 +211,17 @@ impl AgentOutput for CliOutputHandler {
                     }
                 }
             }
-            
+
             AgentEvent::AgentThinking { step_number: _, thinking } => {
                 // In normal mode, show thinking in gray color without prefix
                 println!("\x1b[90m{}\x1b[0m", thinking);
             }
-            
+
+            AgentEvent::TokenUsageUpdated { token_usage: _ } => {
+                // Token updates are handled by the UI layer, CLI doesn't need to show them
+                // This is mainly for interactive mode
+            }
+
             AgentEvent::Message { level, content, metadata: _ } => {
                 match level {
                     MessageLevel::Debug => {
@@ -231,16 +243,19 @@ impl AgentOutput for CliOutputHandler {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn supports_realtime_updates(&self) -> bool {
         self.config.realtime_updates
     }
-    
+
     async fn flush(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use std::io::Write;
-        std::io::stdout().flush().map_err(|e| e.into())
+        std::io
+            ::stdout()
+            .flush()
+            .map_err(|e| e.into())
     }
 }
