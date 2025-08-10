@@ -125,18 +125,23 @@ impl TraeAgent {
         > = std::collections::HashMap::new();
 
         // Log agent thinking in debug mode
-        tracing::debug!("🤖 Agent thinking...");
+        let _ = self.output.debug("🤖 Agent thinking...").await;
 
         // Process stream chunks
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
                     if let Some(delta) = chunk.delta {
-                        print!("{}", delta);
+                        // Emit streaming content through output handler
+                        self.output.normal(&delta).await.unwrap_or_else(|e| {
+                            // Use debug level for internal errors to avoid noise
+                            let _ = futures::executor::block_on(
+                                self.output.debug(
+                                    &format!("Failed to emit streaming content: {}", e)
+                                )
+                            );
+                        });
                         full_content.push_str(&delta);
-                        // Flush stdout to show text as it arrives
-                        use std::io::{ self, Write };
-                        io::stdout().flush().unwrap();
                     }
 
                     // Accumulate tool calls from streaming
@@ -175,7 +180,12 @@ impl TraeAgent {
             }
         }
 
-        println!(); // Add newline after streaming
+        // Add newline after streaming through output handler
+        self.output.normal("").await.unwrap_or_else(|e| {
+            let _ = futures::executor::block_on(
+                self.output.debug(&format!("Failed to emit newline: {}", e))
+            );
+        });
 
         // Construct the final response with accumulated tool calls
         let mut final_tool_calls = Vec::new();
@@ -198,7 +208,17 @@ impl TraeAgent {
                         } else {
                             params_str
                         };
-                        println!("🔧 Failed to parse tool params: {}", truncated_params);
+                        self.output
+                            .warning(
+                                &format!("🔧 Failed to parse tool params: {}", truncated_params)
+                            ).await
+                            .unwrap_or_else(|e| {
+                                let _ = futures::executor::block_on(
+                                    self.output.debug(
+                                        &format!("Failed to emit tool params error: {}", e)
+                                    )
+                                );
+                            });
                     }
                 }
             }
@@ -259,7 +279,7 @@ impl TraeAgent {
         let tool_definitions = self.tool_executor.get_tool_definitions();
 
         // Log agent thinking in debug mode
-        tracing::debug!("🤖 Agent thinking...");
+        let _ = self.output.debug("🤖 Agent thinking...").await;
 
         // Set up options
         let options = Some(ChatOptions {
@@ -284,7 +304,9 @@ impl TraeAgent {
                 self.output
                     .emit_token_update(context.token_usage.clone()).await
                     .unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to emit token update event: {}", e);
+                        let _ = futures::executor::block_on(
+                            self.output.debug(&format!("Failed to emit token update event: {}", e))
+                        );
                     });
             }
         }
@@ -330,7 +352,11 @@ impl TraeAgent {
                             tool_info: tool_info.clone(),
                         }).await
                         .unwrap_or_else(|e| {
-                            eprintln!("Warning: Failed to emit tool execution started event: {}", e);
+                            let _ = futures::executor::block_on(
+                                self.output.debug(
+                                    &format!("Failed to emit tool execution started event: {}", e)
+                                )
+                            );
                         });
 
                     // Record tool call
@@ -357,7 +383,11 @@ impl TraeAgent {
                             tool_info: completed_tool_info,
                         }).await
                         .unwrap_or_else(|e| {
-                            eprintln!("Warning: Failed to emit tool execution completed event: {}", e);
+                            let _ = futures::executor::block_on(
+                                self.output.debug(
+                                    &format!("Failed to emit tool execution completed event: {}", e)
+                                )
+                            );
                         });
 
                     // Handle special tool behaviors
@@ -372,7 +402,11 @@ impl TraeAgent {
                                             thinking: thought_str.to_string(),
                                         }).await
                                         .unwrap_or_else(|e| {
-                                            eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                            let _ = futures::executor::block_on(
+                                                self.output.debug(
+                                                    &format!("Failed to emit thinking event: {}", e)
+                                                )
+                                            );
                                         });
                                 }
                             }
@@ -392,7 +426,11 @@ impl TraeAgent {
                                             thinking: thought.to_string(),
                                         }).await
                                         .unwrap_or_else(|e| {
-                                            eprintln!("Warning: Failed to emit thinking event: {}", e);
+                                            let _ = futures::executor::block_on(
+                                                self.output.debug(
+                                                    &format!("Failed to emit thinking event: {}", e)
+                                                )
+                                            );
                                         });
                                 }
                             }
@@ -439,7 +477,9 @@ impl TraeAgent {
             if !text_content.trim().is_empty() {
                 // Emit the agent's text response as a normal message
                 self.output.normal(&text_content).await.unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to emit agent response message: {}", e);
+                    let _ = futures::executor::block_on(
+                        self.output.debug(&format!("Failed to emit agent response message: {}", e))
+                    );
                 });
             }
         }
@@ -506,7 +546,9 @@ impl TraeAgent {
                     context: context.clone(),
                 }).await
                 .unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to emit execution started event: {}", e);
+                    let _ = futures::executor::block_on(
+                        self.output.debug(&format!("Failed to emit execution started event: {}", e))
+                    );
                 });
         }
 
@@ -614,7 +656,11 @@ impl TraeAgent {
                     summary: summary.clone(),
                 }).await
                 .unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to emit execution completed event: {}", e);
+                    let _ = futures::executor::block_on(
+                        self.output.debug(
+                            &format!("Failed to emit execution completed event: {}", e)
+                        )
+                    );
                 });
         }
 
