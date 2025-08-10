@@ -1,18 +1,32 @@
 //! Interactive output handler implementation for UI integration
 //! Delegates all output behavior to CliOutputHandler while maintaining UI integration
 
-use trae_agent_core::output::{AgentOutput, AgentEvent};
+use trae_agent_core::output::{AgentOutput, AgentEvent, ToolExecutionStatus, MessageLevel};
 use super::cli_handler::{CliOutputHandler, CliOutputConfig};
+use super::formatters::{ToolFormatter, DiffFormatter};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Tools that should not display status indicators
+static SILENT_TOOLS: &[&str] = &[
+    "sequentialthinking",
+];
+
+/// Check if a tool should be silent (no status display)
+fn is_silent_tool(tool_name: &str) -> bool {
+    SILENT_TOOLS.contains(&tool_name)
+}
 
 /// Message types for interactive UI updates
 #[derive(Debug, Clone)]
 pub enum InteractiveMessage {
     /// Agent thinking/reasoning output
     AgentThinking(String),
-    /// Tool execution status update
-    ToolStatus(String),
+    /// Tool execution status update with execution ID for replacement
+    ToolStatus { execution_id: String, status: String },
     /// Tool execution result
     ToolResult(String),
     /// System message
@@ -48,6 +62,12 @@ pub struct InteractiveOutputHandler {
     cli_handler: CliOutputHandler,
     /// Channel sender for UI updates (optional for future use)
     _ui_sender: Option<mpsc::UnboundedSender<InteractiveMessage>>,
+    /// Tool formatter for consistent formatting
+    tool_formatter: ToolFormatter,
+    /// Diff formatter for edit results
+    diff_formatter: DiffFormatter,
+    /// Track active tool executions
+    active_tools: Arc<Mutex<HashMap<String, trae_agent_core::output::ToolExecutionInfo>>>,
 }
 
 impl InteractiveOutputHandler {
@@ -65,6 +85,9 @@ impl InteractiveOutputHandler {
         Self {
             cli_handler,
             _ui_sender: Some(ui_sender),
+            tool_formatter: ToolFormatter::new(),
+            diff_formatter: DiffFormatter::new(),
+            active_tools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -82,36 +105,43 @@ impl AgentOutput for InteractiveOutputHandler {
         if let Some(ui_sender) = &self._ui_sender {
             match event {
                 AgentEvent::ExecutionStarted { context } => {
-                    let msg = format!("⏳ Executing task: {}", context.task);
+                    // Use same format as CLI mode
+                    let _ = ui_sender.send(InteractiveMessage::SystemMessage("⏳ Executing task...".to_string()));
+                    let msg = format!("Task: {}", context.task);
                     let _ = ui_sender.send(InteractiveMessage::SystemMessage(msg));
                 }
 
-                AgentEvent::ExecutionCompleted { context, success, summary } => {
-                    let _ = ui_sender.send(InteractiveMessage::TaskCompleted { success, summary: summary.clone() });
+                AgentEvent::ExecutionCompleted { context, success: _, summary: _ } => {
+                    // Use same format as CLI mode
+                    let stats_msg = format!("📈 Executed {} steps", context.current_step);
+                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(stats_msg));
 
-                    // Send execution statistics
-                    let token_msg = if context.token_usage.total_tokens > 0 {
-                        Some(format!("🪙 {} input + {} output = {} total tokens",
+                    let duration_msg = format!("⏱️  Duration: {:.2}s", context.execution_time.as_secs_f64());
+                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(duration_msg));
+
+                    // Show token usage if available
+                    if context.token_usage.total_tokens > 0 {
+                        let token_msg = format!("🪙 Tokens: {} input + {} output = {} total",
                             context.token_usage.input_tokens,
                             context.token_usage.output_tokens,
-                            context.token_usage.total_tokens))
-                    } else {
-                        None
-                    };
-
-                    let _ = ui_sender.send(InteractiveMessage::ExecutionStats {
-                        steps: context.current_step,
-                        duration: context.execution_time.as_secs_f64(),
-                        tokens: token_msg,
-                    });
+                            context.token_usage.total_tokens);
+                        let _ = ui_sender.send(InteractiveMessage::SystemMessage(token_msg));
+                    }
                 }
 
                 AgentEvent::ToolExecutionStarted { tool_info } => {
                     // Skip status display for silent tools like sequentialthinking
                     if !is_silent_tool(&tool_info.tool_name) {
-                        let status_msg = format!("🔧 {}", tool_info.tool_name);
-                        let _ = ui_sender.send(InteractiveMessage::ToolStatus(status_msg));
+                        // Use same format as CLI mode
+                        let status_msg = self.tool_formatter.format_tool_status(&tool_info);
+                        let _ = ui_sender.send(InteractiveMessage::ToolStatus {
+                            execution_id: tool_info.execution_id.clone(),
+                            status: status_msg
+                        });
                     }
+                    // Track tool for potential updates
+                    let mut active_tools = self.active_tools.lock().await;
+                    active_tools.insert(tool_info.execution_id.clone(), tool_info);
                 }
 
                 AgentEvent::ToolExecutionCompleted { tool_info } => {
@@ -120,33 +150,57 @@ impl AgentOutput for InteractiveOutputHandler {
                         return Ok(());
                     }
 
-                    let status_msg = match tool_info.status {
-                        trae_agent_core::output::ToolExecutionStatus::Success => {
-                            format!("✅ {} completed", tool_info.tool_name)
-                        }
-                        trae_agent_core::output::ToolExecutionStatus::Error => {
-                            format!("❌ {} failed", tool_info.tool_name)
-                        }
-                        _ => {
-                            format!("🔧 {} executing", tool_info.tool_name)
-                        }
-                    };
-                    let _ = ui_sender.send(InteractiveMessage::ToolStatus(status_msg));
+                    // Remove from active tools tracking
+                    let mut active_tools = self.active_tools.lock().await;
+                    active_tools.remove(&tool_info.execution_id);
 
-                    // Send result content if available
-                    if let Some(result) = &tool_info.result {
-                        if !result.content.is_empty() {
-                            let _ = ui_sender.send(InteractiveMessage::ToolResult(result.content.clone()));
+                    // Use same format as CLI mode
+                    let status_msg = self.tool_formatter.format_tool_status(&tool_info);
+                    let _ = ui_sender.send(InteractiveMessage::ToolStatus {
+                        execution_id: tool_info.execution_id.clone(),
+                        status: status_msg
+                    });
+
+                    // Show result content if available
+                    if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info) {
+                        let _ = ui_sender.send(InteractiveMessage::ToolResult(result_display));
+                    }
+
+                    // Show diff for edit tools
+                    if tool_info.tool_name == "str_replace_based_edit_tool" {
+                        if let Some(diff_display) = self.diff_formatter.format_edit_result(&tool_info) {
+                            let _ = ui_sender.send(InteractiveMessage::ToolResult(diff_display));
                         }
                     }
                 }
 
                 AgentEvent::AgentThinking { thinking, .. } => {
+                    // Use same format as CLI mode - gray color without prefix
                     let _ = ui_sender.send(InteractiveMessage::AgentThinking(thinking));
                 }
 
-                AgentEvent::Message { content, .. } => {
-                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(content));
+                AgentEvent::Message { level, content, .. } => {
+                    match level {
+                        MessageLevel::Debug => {
+                            // Debug messages are usually not shown in interactive mode
+                        }
+                        MessageLevel::Info => {
+                            let msg = format!("ℹ️  {}", content);
+                            let _ = ui_sender.send(InteractiveMessage::SystemMessage(msg));
+                        }
+                        MessageLevel::Normal => {
+                            // Normal text output - just the content without prefix
+                            let _ = ui_sender.send(InteractiveMessage::SystemMessage(content));
+                        }
+                        MessageLevel::Warning => {
+                            let msg = format!("⚠️  Warning: {}", content);
+                            let _ = ui_sender.send(InteractiveMessage::SystemMessage(msg));
+                        }
+                        MessageLevel::Error => {
+                            let msg = format!("❌ Error: {}", content);
+                            let _ = ui_sender.send(InteractiveMessage::SystemMessage(msg));
+                        }
+                    }
                 }
 
                 _ => {
@@ -171,15 +225,3 @@ impl AgentOutput for InteractiveOutputHandler {
         self.cli_handler.flush().await
     }
 }
-
-/// Tools that should not display status indicators
-static SILENT_TOOLS: &[&str] = &[
-    "sequentialthinking",
-];
-
-/// Check if a tool should be silent (no status display)
-fn is_silent_tool(tool_name: &str) -> bool {
-    SILENT_TOOLS.contains(&tool_name)
-}
-
-

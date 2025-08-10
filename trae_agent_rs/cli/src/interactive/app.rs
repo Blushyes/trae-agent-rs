@@ -115,6 +115,7 @@ pub enum AppMessage {
     SystemMessage(String),
     InteractiveUpdate(InteractiveMessage),
     AgentExecutionCompleted,
+    ToolStatusUpdate { execution_id: String, status: String },
 }
 
 
@@ -128,30 +129,35 @@ fn get_interactive_context() -> (Config, PathBuf) {
     }
 }
 
-/// Convert AppMessage to UI message tuple (role, content)
-fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String)> {
+/// Convert AppMessage to UI message tuple (role, content, message_id)
+fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String, Option<String>)> {
     match app_message {
-        AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg)),
+        AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
         AppMessage::InteractiveUpdate(interactive_msg) => {
             match interactive_msg {
-                InteractiveMessage::AgentThinking(thinking) => Some(("agent".to_string(), thinking)),
-                InteractiveMessage::ToolStatus(status) => Some(("system".to_string(), status)),
-                InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result)),
-                InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg)),
+                InteractiveMessage::AgentThinking(thinking) => Some(("agent".to_string(), thinking, None)),
+                InteractiveMessage::ToolStatus { execution_id, status } => {
+                    Some(("system".to_string(), status, Some(execution_id)))
+                },
+                InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result, None)),
+                InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
                 InteractiveMessage::TaskCompleted { success, summary } => {
                     let status_icon = if success { "✅" } else { "❌" };
-                    Some(("system".to_string(), format!("{} Task completed: {}", status_icon, summary)))
+                    Some(("system".to_string(), format!("{} Task completed: {}", status_icon, summary), None))
                 }
                 InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
                     let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
                     if let Some(token_info) = tokens {
                         stats.push_str(&format!("\n{}", token_info));
                     }
-                    Some(("system".to_string(), stats))
+                    Some(("system".to_string(), stats, None))
                 }
             }
         }
         AppMessage::AgentExecutionCompleted => None,
+        AppMessage::ToolStatusUpdate { execution_id, status } => {
+            Some(("tool_status".to_string(), status, Some(execution_id)))
+        }
     }
 }
 
@@ -160,7 +166,7 @@ fn spawn_ui_agent_task(
     input: String,
     config: Config,
     project_path: PathBuf,
-    messages: iocraft::hooks::State<Vec<(String, String)>>,
+    messages: iocraft::hooks::State<Vec<(String, String, Option<String>)>>,
     is_processing: iocraft::hooks::State<bool>,
 ) {
     // Create a channel for UI updates
@@ -176,10 +182,25 @@ fn spawn_ui_agent_task(
                     is_processing_for_receiver.set(false);
                 }
                 _ => {
-                    // Convert and add message if applicable
-                    if let Some((role, content)) = app_message_to_ui_message(app_message) {
+                    // Convert and add/update message if applicable
+                    if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
                         let mut current_messages = messages_for_receiver.read().clone();
-                        current_messages.push((role, content));
+
+                        if let Some(msg_id) = message_id {
+                            // This is a tool status update - find and replace existing message
+                            if let Some(pos) = current_messages.iter().position(|(_, _, id)| {
+                                id.as_ref() == Some(&msg_id)
+                            }) {
+                                current_messages[pos] = (role, content, Some(msg_id));
+                            } else {
+                                // Tool message not found, add as new message
+                                current_messages.push((role, content, Some(msg_id)));
+                            }
+                        } else {
+                            // Regular message - just add
+                            current_messages.push((role, content, None));
+                        }
+
                         messages_for_receiver.set(current_messages);
                     }
                 }
@@ -251,7 +272,7 @@ fn TraeLogo(mut _hooks: Hooks) -> impl Into<AnyElement<'static>> {
 fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut system = hooks.use_context_mut::<SystemContext>();
     let input_value = hooks.use_state(|| String::new());
-    let messages = hooks.use_state(|| Vec::<(String, String)>::new()); // (role, content)
+    let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new()); // (role, content, message_id)
     let is_processing = hooks.use_state(|| false);
     let should_exit = hooks.use_state(|| false);
 
@@ -294,7 +315,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 
                         // Add user message and update UI state in a single batch
                         let mut current_messages = messages.read().clone();
-                        current_messages.push(("user".to_string(), input.clone()));
+                        current_messages.push(("user".to_string(), input.clone(), None));
                         messages.set(current_messages);
 
                         // Set processing state
@@ -375,7 +396,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     overflow: Overflow::Scroll, // Enable scrolling for long content
                     min_height: 0, // Prevent flex item from growing beyond container
                 ) {
-                #(messages.read().iter().map(|(role, content)| {
+                #(messages.read().iter().map(|(role, content, _message_id)| {
                     // 动态获取终端宽度并换行，防止自动换行导致UI错乱
                     let terminal_width = get_terminal_width();
                     let wrapped_lines = wrap_text(content, terminal_width);
