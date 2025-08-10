@@ -3,11 +3,9 @@
 use anyhow::Result;
 use iocraft::prelude::*;
 use std::path::PathBuf;
-use std::time::{ Duration, Instant };
 use tokio::sync::mpsc;
-use trae_agent_core::{ Config, agent::TraeAgent };
+use trae_agent_core::Config;
 use crate::output::interactive_handler::{ InteractiveMessage, InteractiveOutputHandler };
-use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 /// Get terminal width with fallback
 fn get_terminal_width() -> usize {
@@ -100,15 +98,23 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-/// Context for interactive mode
+/// Context for interactive mode - immutable application configuration
 #[derive(Debug, Clone)]
-struct InteractiveContext {
+struct AppContext {
     config: Config,
     project_path: PathBuf,
+    terminal_width: usize,
 }
 
-/// Global storage for interactive context accessible across threads
-static INTERACTIVE_CONTEXT: OnceLock<InteractiveContext> = OnceLock::new();
+impl AppContext {
+    fn new(config: Config, project_path: PathBuf) -> Self {
+        Self {
+            config,
+            project_path,
+            terminal_width: get_terminal_width(),
+        }
+    }
+}
 
 /// Message types for the interactive app
 #[derive(Debug, Clone)]
@@ -123,15 +129,6 @@ pub enum AppMessage {
     TokenUpdate {
         tokens: u32,
     },
-}
-
-/// Get interactive context with fallback to defaults
-fn get_interactive_context() -> (Config, PathBuf) {
-    if let Some(ctx) = INTERACTIVE_CONTEXT.get() {
-        (ctx.config.clone(), ctx.project_path.clone())
-    } else {
-        (Config::default(), PathBuf::from("."))
-    }
 }
 
 /// Convert AppMessage to UI message tuple (role, content, message_id)
@@ -255,22 +252,27 @@ fn spawn_ui_agent_task(
 pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
     println!("🎯 Starting Trae Agent Interactive Mode");
 
-    // Store config and project path in a global context for the UI (accessible across threads)
-    let _ = INTERACTIVE_CONTEXT.set(InteractiveContext { config, project_path });
+    // Create app context with immutable configuration
+    let app_context = AppContext::new(config, project_path);
 
-    // Run the iocraft-based UI
-    tokio::task::spawn_blocking(|| {
-        smol::block_on(async { element!(TraeApp).render_loop().await })
+    // Run the iocraft-based UI with context provider
+    tokio::task::spawn_blocking(move || {
+        smol::block_on(async {
+            (
+                element! {
+                ContextProvider(value: Context::owned(app_context)) {
+                    TraeApp
+                }
+            }
+            ).render_loop().await
+        })
     }).await??;
 
     Ok(())
 }
 
-/// TRAE ASCII Art Logo Component (Memoized to prevent re-rendering)
-#[component]
-fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    // Static logo content - this won't change during the app lifecycle
-    let logo = r#"
+// Static logo constant to prevent re-creation
+const TRAE_LOGO: &str = r#"
  ███
 ░░░███
   ░░░███
@@ -281,10 +283,13 @@ fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
 ░░░
 "#;
 
+/// TRAE ASCII Art Logo Component (Static to prevent re-rendering)
+#[component]
+fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
     element! {
-        View {
+        View(key: "logo-content") {
             Text(
-                content: logo,
+                content: TRAE_LOGO,
                 color: Color::Rgb { r: 0, g: 255, b: 127 }, // 使用更鲜艳的绿色渐变
                 weight: Weight::Bold,
             )
@@ -377,6 +382,8 @@ fn DynamicStatusLine(
 #[component]
 fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut system = hooks.use_context_mut::<SystemContext>();
+    let app_context = hooks.use_context::<AppContext>();
+
     let input_value = hooks.use_state(|| String::new());
     let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new()); // (role, content, message_id)
     let is_processing = hooks.use_state(|| false);
@@ -392,6 +399,15 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let token_animation_start = hooks.use_state(|| std::time::Instant::now());
     let token_animation_duration = hooks.use_state(|| std::time::Duration::from_secs(3));
     let _last_token_update = hooks.use_state(|| std::time::Instant::now());
+
+    // Use terminal width from context, with dynamic updates
+    let mut terminal_width = hooks.use_state(|| app_context.terminal_width);
+
+    // Update terminal width when terminal size changes
+    let (width, _height) = hooks.use_terminal_size();
+    if (width as usize) != *terminal_width.read() {
+        terminal_width.set(width as usize);
+    }
 
     // Token animation logic (simplified - no timer updates)
     let mut current_tokens_clone = current_tokens.clone();
@@ -433,8 +449,9 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         }
     });
 
-    // Get interactive context
-    let (config, project_path) = get_interactive_context();
+    // Get config and project path from context
+    let config = app_context.config.clone();
+    let project_path = app_context.project_path.clone();
 
     // Handle terminal events
     hooks.use_terminal_events({
@@ -510,6 +527,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 
     element! {
         View(
+            key: "main-container",
             flex_direction: FlexDirection::Column,
             height: 100pct,
             width: 100pct,
@@ -518,6 +536,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         ) {
             // Scrollable content area - takes up all available space except bottom fixed area
             View(
+                key: "content-area",
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Column,
                 overflow: Overflow::Hidden, // Prevent content from overflowing
@@ -525,12 +544,13 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             ) {
                 // Header with TRAE logo - always visible
                 View(
+                    key: "header-section",
                     margin_bottom: 1,
                     flex_direction: FlexDirection::Column,
                     flex_shrink: 0.0, // Prevent logo from shrinking
                 ) {
-                    View(margin_bottom: 1) {
-                        TraeLogo
+                    View(key: "logo-container", margin_bottom: 1) {
+                        TraeLogo(key: "static-logo")
                     }
                     // Tips (only show when no messages)
                     #(if messages.read().is_empty() {
@@ -564,26 +584,33 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 
                 // Chat messages area - 支持文本换行，防止UI错乱
                 View(
+                    key: "messages-container",
                     flex_grow: 1.0,
                     flex_direction: FlexDirection::Column,
                     overflow: Overflow::Scroll, // Enable scrolling for long content
                     min_height: 0, // Prevent flex item from growing beyond container
+                    position: Position::Relative, // Stable positioning
+                    flex_shrink: 1.0, // Allow shrinking when needed
                 ) {
-                #(messages.read().iter().map(|(role, content, _message_id)| {
-                    // 动态获取终端宽度并换行，防止自动换行导致UI错乱
-                    let terminal_width = get_terminal_width();
-                    let wrapped_lines = wrap_text(content, terminal_width);
+                #(messages.read().iter().enumerate().map(|(idx, (role, content, message_id))| {
+                    // 使用缓存的终端宽度，避免频繁系统调用
+                    let cached_width = *terminal_width.read();
+                    let wrapped_lines = wrap_text(content, cached_width);
+
+                    // 使用message_id或者索引作为key
+                    let msg_key = message_id.as_ref().map(|id| id.clone()).unwrap_or_else(|| idx.to_string());
 
                     if role == "user" {
                         element! {
                             View(
+                                key: format!("user-msg-{}", msg_key),
                                 width: 100pct,
                                 margin_bottom: 1,
                                 flex_direction: FlexDirection::Column,
                             ) {
                                 #(wrapped_lines.iter().enumerate().map(|(i, line)| {
                                     element! {
-                                        View(width: 100pct) {
+                                        View(key: format!("user-line-{}-{}", msg_key, i), width: 100pct) {
                                             Text(
                                                 content: if i == 0 {
                                                     format!("> {}", line)
@@ -600,13 +627,14 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     } else {
                         element! {
                             View(
+                                key: format!("assistant-msg-{}", msg_key),
                                 width: 100pct,
                                 margin_bottom: 1,
                                 flex_direction: FlexDirection::Column,
                             ) {
-                                #(wrapped_lines.iter().map(|line| {
+                                #(wrapped_lines.iter().enumerate().map(|(i, line)| {
                                     element! {
-                                        View(width: 100pct) {
+                                        View(key: format!("assistant-line-{}-{}", msg_key, i), width: 100pct) {
                                             Text(
                                                 content: line,
                                                 color: Color::White,
@@ -625,6 +653,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 
             // Dynamic status line (isolated component to prevent parent re-rendering)
             DynamicStatusLine(
+                key: "dynamic-status-line",
                 is_processing: *is_processing.read(),
                 operation: current_operation.read().clone(),
                 start_time: *operation_start_time.read(),
@@ -633,6 +662,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 
             // Fixed bottom area for input and status - this should never move
             View(
+                key: "input-section",
                 flex_shrink: 0.0, // Prevent shrinking
                 flex_grow: 0.0,   // Prevent growing
                 flex_direction: FlexDirection::Column,
@@ -641,6 +671,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             ) {
                 // Input area - 简约边框风格，单行高度
                 View(
+                    key: "input-container",
                     border_style: BorderStyle::Round,
                     border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
                     padding_left: 1,
