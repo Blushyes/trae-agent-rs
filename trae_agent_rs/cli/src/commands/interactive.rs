@@ -1,9 +1,9 @@
 //! Interactive mode command
 
+use crate::interactive::app::run_rich_interactive;
 use anyhow::Result;
 use std::path::PathBuf;
-use tracing::{info, debug};
-use crate::interactive::app::run_rich_interactive;
+use tracing::{debug, info};
 use trae_agent_core::Config;
 
 /// Start interactive mode
@@ -14,20 +14,25 @@ pub async fn interactive_command(
 ) -> Result<()> {
     info!("Starting interactive mode");
 
-    println!("⚙️  Config directory: {}", config_dir.display());
-
     if let Some(trajectory_file) = &trajectory_file {
-        println!("📊 Trajectory file: {}", trajectory_file.display());
+        tracing::debug!("📊 Trajectory file: {}", trajectory_file.display());
     }
 
     // Load configuration using API-based system
     let config = match Config::from_api_configs(&config_dir).await {
         Ok(config) => {
-            debug!("📋 Loaded API-based configuration from: {}", config_dir.display());
+            debug!(
+                "📋 Loaded API-based configuration from: {}",
+                config_dir.display()
+            );
             config
         }
         Err(e) => {
-            debug!("⚠️  Failed to load configuration from {}: {}", config_dir.display(), e);
+            debug!(
+                "⚠️  Failed to load configuration from {}: {}",
+                config_dir.display(),
+                e
+            );
             debug!("📋 Using default configuration");
             Config::default()
         }

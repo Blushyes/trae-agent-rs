@@ -39,6 +39,7 @@ clap = { version = "4.0", features = ["derive", "env"] }
 
 # Terminal UI
 iocraft = { git = "https://github.com/Blushyes/iocraft" }
+# iocraft = "0.7"
 crossterm = "0.29"
 smol = "2.0"
 

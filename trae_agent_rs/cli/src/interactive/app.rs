@@ -277,8 +277,6 @@ fn spawn_ui_agent_task(
 
 /// Interactive mode using iocraft
 pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Result<()> {
-    println!("🎯 Starting Trae Agent Interactive Mode");
-
     // Create UI broadcast channel and app context
     let (ui_sender, _ui_rx) = broadcast::channel::<AppMessage>(256);
     let app_context = AppContext::new(config, project_path, ui_sender);
