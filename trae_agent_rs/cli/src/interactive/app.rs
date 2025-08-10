@@ -190,27 +190,45 @@ pub enum AppMessage {
     TokenUpdate { tokens: u32 },
 }
 
+/// Generate a unique message ID
+fn generate_message_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("msg_{}", timestamp)
+}
+
 /// Convert AppMessage to UI message tuple (role, content, message_id)
 fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String, Option<String>)> {
     match app_message {
-        AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
-        AppMessage::UserMessage(msg) => Some(("user".to_string(), msg, None)),
+        AppMessage::SystemMessage(msg) => {
+            Some(("system".to_string(), msg, Some(generate_message_id())))
+        }
+        AppMessage::UserMessage(msg) => {
+            Some(("user".to_string(), msg, Some(generate_message_id())))
+        }
         AppMessage::InteractiveUpdate(interactive_msg) => match interactive_msg {
             InteractiveMessage::AgentThinking(thinking) => {
-                Some(("agent".to_string(), thinking, None))
+                Some(("agent".to_string(), thinking, Some(generate_message_id())))
             }
             InteractiveMessage::ToolStatus {
                 execution_id,
                 status,
             } => Some(("system".to_string(), status, Some(execution_id))),
-            InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result, None)),
-            InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
+            InteractiveMessage::ToolResult(result) => {
+                Some(("agent".to_string(), result, Some(generate_message_id())))
+            }
+            InteractiveMessage::SystemMessage(msg) => {
+                Some(("system".to_string(), msg, Some(generate_message_id())))
+            }
             InteractiveMessage::TaskCompleted { success, summary } => {
                 let status_icon = if success { "✅" } else { "❌" };
                 Some((
                     "system".to_string(),
                     format!("{} Task completed: {}", status_icon, summary),
-                    None,
+                    Some(generate_message_id()),
                 ))
             }
             InteractiveMessage::ExecutionStats {
@@ -222,7 +240,7 @@ fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String,
                 if let Some(token_info) = tokens {
                     stats.push_str(&format!("\n{}", token_info));
                 }
-                Some(("system".to_string(), stats, None))
+                Some(("system".to_string(), stats, Some(generate_message_id())))
             }
         },
         AppMessage::AgentTaskStarted { .. } => None,
@@ -265,7 +283,7 @@ pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Resu
     let (ui_sender, _ui_rx) = broadcast::channel::<AppMessage>(256);
     let app_context = AppContext::new(config, project_path, ui_sender);
 
-    // Run the iocraft-based UI with context provider
+    // Run the iocraft-based UI with context provider in fullscreen mode
     tokio::task::spawn_blocking(move || {
         smol::block_on(async {
             (element! {
@@ -752,33 +770,27 @@ fn DynamicStatusLine(
 
 /// Main TRAE Interactive Application Component
 #[component]
-fn TraeApp() -> impl Into<AnyElement<'static>> {
+fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    // Get terminal size for full screen rendering
+    let (width, height) = hooks.use_terminal_size();
+
     element! {
         View(
             key: "main-container",
             flex_direction: FlexDirection::Column,
-            height: 100pct,
-            width: 100pct,
+            width: width,
+            height: height,
             padding: 1,
             position: Position::Relative, // Ensure stable positioning
         ) {
-            // Scrollable content area - takes up all available space except bottom fixed area
-            View(
-                key: "content-area",
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                overflow: Overflow::Hidden, // Prevent content from overflowing
-                max_height: 100pct,         // Constrain height to prevent expansion
-            ) {
-                // Header with TRAE logo - always visible
-                HeaderSection(key: "header-section-component")
+            // Header with TRAE logo - always visible
+            HeaderSection(key: "header-section-component")
 
-                // Chat messages area - 支持文本换行，防止UI错乱
-                MessagesArea(key: "messages-area-component")
-            }
+            // Chat messages area - 支持文本换行，防止UI错乱
+            MessagesArea(key: "messages-area-component")
 
             // Dynamic status line (isolated component to prevent parent re-rendering)
-            // DynamicStatusLine(key: "dynamic-status-line")
+            DynamicStatusLine(key: "dynamic-status-line")
 
             // Fixed bottom area for input and status - this should never move
             InputSection(key: "input-section-component")
