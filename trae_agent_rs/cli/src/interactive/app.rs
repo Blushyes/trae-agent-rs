@@ -289,11 +289,15 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                             return;
                         }
 
-                        // Add user message and update UI state
+                        // Clear input immediately to prevent visual glitches
+                        input_value.set(String::new());
+
+                        // Add user message and update UI state in a single batch
                         let mut current_messages = messages.read().clone();
                         current_messages.push(("user".to_string(), input.clone()));
                         messages.set(current_messages);
-                        input_value.set(String::new());
+
+                        // Set processing state
                         is_processing.set(true);
 
                         // Execute agent task asynchronously
@@ -314,26 +318,32 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         View(
             flex_direction: FlexDirection::Column,
             height: 100pct,
+            width: 100pct,
             padding: 1,
+            position: Position::Relative, // Ensure stable positioning
         ) {
             // Scrollable content area - takes up all available space except bottom fixed area
             View(
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Column,
                 overflow: Overflow::Hidden, // Prevent content from overflowing
+                max_height: 100pct,         // Constrain height to prevent expansion
             ) {
-                // Header with TRAE logo and tips (only show when no messages)
-                #(if messages.read().is_empty() {
-                    Some(element! {
-                        View(
-                            margin_bottom: 2,
-                            flex_direction: FlexDirection::Column,
-                        ) {
-                            View(margin_bottom: 2) {
-                                TraeLogo
-                            }
+                // Header with TRAE logo - always visible
+                View(
+                    margin_bottom: 1,
+                    flex_direction: FlexDirection::Column,
+                    flex_shrink: 0.0, // Prevent logo from shrinking
+                ) {
+                    View(margin_bottom: 1) {
+                        TraeLogo
+                    }
+                    // Tips (only show when no messages)
+                    #(if messages.read().is_empty() {
+                        Some(element! {
                             View(
                                 flex_direction: FlexDirection::Column,
+                                margin_bottom: 1,
                             ) {
                                 Text(
                                     content: "Tips for getting started:",
@@ -352,17 +362,18 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                                     color: Color::White,
                                 )
                             }
-                        }
+                        })
+                    } else {
+                        None
                     })
-                } else {
-                    None
-                })
+                }
 
                 // Chat messages area - 支持文本换行，防止UI错乱
                 View(
                     flex_grow: 1.0,
                     flex_direction: FlexDirection::Column,
                     overflow: Overflow::Scroll, // Enable scrolling for long content
+                    min_height: 0, // Prevent flex item from growing beyond container
                 ) {
                 #(messages.read().iter().map(|(role, content)| {
                     // 动态获取终端宽度并换行，防止自动换行导致UI错乱
@@ -429,7 +440,10 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             // Fixed bottom area for input and status - this should never move
             View(
                 flex_shrink: 0.0, // Prevent shrinking
+                flex_grow: 0.0,   // Prevent growing
                 flex_direction: FlexDirection::Column,
+                height: 5,        // Fixed height for input area
+                position: Position::Relative, // Ensure stable positioning
             ) {
                 // Input area - 简约边框风格，单行高度
                 View(
@@ -441,6 +455,8 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     padding_bottom: 0,
                     margin_bottom: 1,
                     height: 3, // Fixed height to prevent expansion
+                    flex_shrink: 0.0, // Prevent shrinking
+                    flex_grow: 0.0,   // Prevent growing
                 ) {
                 View(
                     flex_direction: FlexDirection::Row,

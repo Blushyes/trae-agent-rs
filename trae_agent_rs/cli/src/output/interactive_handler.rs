@@ -77,10 +77,8 @@ impl InteractiveOutputHandler {
 #[async_trait]
 impl AgentOutput for InteractiveOutputHandler {
     async fn emit_event(&self, event: AgentEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // First delegate to CLI handler for console output
-        self.cli_handler.emit_event(event.clone()).await?;
-
-        // Then send UI messages if we have a sender
+        // In interactive mode, only use UI messages to avoid duplicate output
+        // Only delegate to CLI handler if we don't have a UI sender
         if let Some(ui_sender) = &self._ui_sender {
             match event {
                 AgentEvent::ExecutionStarted { context } => {
@@ -155,6 +153,9 @@ impl AgentOutput for InteractiveOutputHandler {
                     // Other events are handled by CLI output
                 }
             }
+        } else {
+            // Fallback to CLI handler if no UI sender is available
+            self.cli_handler.emit_event(event).await?;
         }
 
         Ok(())
