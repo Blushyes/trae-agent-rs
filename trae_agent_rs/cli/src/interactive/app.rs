@@ -1,11 +1,11 @@
 //! Interactive application using iocraft
 
+use crate::output::interactive_handler::{InteractiveMessage, InteractiveOutputHandler};
 use anyhow::Result;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use trae_agent_core::Config;
-use crate::output::interactive_handler::{ InteractiveMessage, InteractiveOutputHandler };
 use unicode_width::UnicodeWidthStr;
 /// Get terminal width with fallback
 fn get_terminal_width() -> usize {
@@ -135,36 +135,41 @@ pub enum AppMessage {
 fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String, Option<String>)> {
     match app_message {
         AppMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
-        AppMessage::InteractiveUpdate(interactive_msg) => {
-            match interactive_msg {
-                InteractiveMessage::AgentThinking(thinking) =>
-                    Some(("agent".to_string(), thinking, None)),
-                InteractiveMessage::ToolStatus { execution_id, status } => {
-                    Some(("system".to_string(), status, Some(execution_id)))
-                }
-                InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result, None)),
-                InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
-                InteractiveMessage::TaskCompleted { success, summary } => {
-                    let status_icon = if success { "✅" } else { "❌" };
-                    Some((
-                        "system".to_string(),
-                        format!("{} Task completed: {}", status_icon, summary),
-                        None,
-                    ))
-                }
-                InteractiveMessage::ExecutionStats { steps, duration, tokens } => {
-                    let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
-                    if let Some(token_info) = tokens {
-                        stats.push_str(&format!("\n{}", token_info));
-                    }
-                    Some(("system".to_string(), stats, None))
-                }
+        AppMessage::InteractiveUpdate(interactive_msg) => match interactive_msg {
+            InteractiveMessage::AgentThinking(thinking) => {
+                Some(("agent".to_string(), thinking, None))
             }
-        }
+            InteractiveMessage::ToolStatus {
+                execution_id,
+                status,
+            } => Some(("system".to_string(), status, Some(execution_id))),
+            InteractiveMessage::ToolResult(result) => Some(("agent".to_string(), result, None)),
+            InteractiveMessage::SystemMessage(msg) => Some(("system".to_string(), msg, None)),
+            InteractiveMessage::TaskCompleted { success, summary } => {
+                let status_icon = if success { "✅" } else { "❌" };
+                Some((
+                    "system".to_string(),
+                    format!("{} Task completed: {}", status_icon, summary),
+                    None,
+                ))
+            }
+            InteractiveMessage::ExecutionStats {
+                steps,
+                duration,
+                tokens,
+            } => {
+                let mut stats = format!("📈 Executed {} steps in {:.2}s", steps, duration);
+                if let Some(token_info) = tokens {
+                    stats.push_str(&format!("\n{}", token_info));
+                }
+                Some(("system".to_string(), stats, None))
+            }
+        },
         AppMessage::AgentExecutionCompleted => None,
-        AppMessage::ToolStatusUpdate { execution_id, status } => {
-            Some(("tool_status".to_string(), status, Some(execution_id)))
-        }
+        AppMessage::ToolStatusUpdate {
+            execution_id,
+            status,
+        } => Some(("tool_status".to_string(), status, Some(execution_id))),
         AppMessage::TokenUpdate { tokens: _ } => None, // Token updates don't create UI messages, they update state directly
     }
 }
@@ -179,7 +184,7 @@ fn spawn_ui_agent_task(
     _current_operation: iocraft::hooks::State<String>,
     _current_tokens: iocraft::hooks::State<u32>,
     target_tokens: iocraft::hooks::State<u32>,
-    token_animation_start: iocraft::hooks::State<std::time::Instant>
+    token_animation_start: iocraft::hooks::State<std::time::Instant>,
 ) {
     // Create a channel for UI updates
     let (ui_sender, mut ui_receiver) = mpsc::unbounded_channel();
@@ -204,18 +209,16 @@ fn spawn_ui_agent_task(
                 }
                 _ => {
                     // Convert and add/update message if applicable
-                    if
-                        let Some((role, content, message_id)) =
-                            app_message_to_ui_message(app_message)
+                    if let Some((role, content, message_id)) =
+                        app_message_to_ui_message(app_message)
                     {
                         let mut current_messages = messages_for_receiver.read().clone();
 
                         if let Some(msg_id) = message_id {
                             // This is a tool status update - find and replace existing message
-                            if
-                                let Some(pos) = current_messages
-                                    .iter()
-                                    .position(|(_, _, id)| { id.as_ref() == Some(&msg_id) })
+                            if let Some(pos) = current_messages
+                                .iter()
+                                .position(|(_, _, id)| id.as_ref() == Some(&msg_id))
                             {
                                 current_messages[pos] = (role, content, Some(msg_id));
                             } else {
@@ -258,15 +261,16 @@ pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Resu
     // Run the iocraft-based UI with context provider
     tokio::task::spawn_blocking(move || {
         smol::block_on(async {
-            (
-                element! {
+            (element! {
                 ContextProvider(value: Context::owned(app_context)) {
                     TraeApp
                 }
-            }
-            ).render_loop().await
+            })
+            .render_loop()
+            .await
         })
-    }).await??;
+    })
+    .await??;
 
     Ok(())
 }
@@ -320,7 +324,7 @@ impl Default for DynamicStatusLineProps {
 #[component]
 fn DynamicStatusLine(
     mut hooks: Hooks,
-    props: &DynamicStatusLineProps
+    props: &DynamicStatusLineProps,
 ) -> impl Into<AnyElement<'static>> {
     let is_processing = props.is_processing;
     let operation = props.operation.clone();
@@ -357,10 +361,7 @@ fn DynamicStatusLine(
     // Format the status line
     let status_text = format!(
         "{} {}… ({}s · ↑ {} tokens · esc to interrupt)",
-        spinner,
-        operation,
-        elapsed,
-        tokens
+        spinner, operation, elapsed, tokens
     );
 
     element! {
@@ -461,7 +462,9 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         let mut should_exit = should_exit;
         move |event| {
             match event {
-                TerminalEvent::Key(KeyEvent { code, kind, .. }) if kind != KeyEventKind::Release => {
+                TerminalEvent::Key(KeyEvent { code, kind, .. })
+                    if kind != KeyEventKind::Release =>
+                {
                     match code {
                         KeyCode::Char('q') if input_value.read().is_empty() => {
                             should_exit.set(true);
@@ -510,7 +513,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                                 current_operation.clone(),
                                 current_tokens.clone(),
                                 target_tokens.clone(),
-                                token_animation_start.clone()
+                                token_animation_start.clone(),
                             );
                         }
                         _ => {}
@@ -549,7 +552,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     flex_direction: FlexDirection::Column,
                     flex_shrink: 0.0, // Prevent logo from shrinking
                 ) {
-                    View(key: "logo-container", margin_bottom: 1) {
+                    View(key: "logcontanier", margin_bottom: 1) {
                         TraeLogo(key: "static-logo")
                     }
                     // Tips (only show when no messages)
@@ -683,41 +686,40 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     flex_shrink: 0.0, // Prevent shrinking
                     flex_grow: 0.0,   // Prevent growing
                 ) {
+                    View(
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                    ) {
+                        Text(
+                            content: "> ",
+                            color: Color::Rgb { r: 100, g: 149, b: 237 },
+                        )
+                        #(if input_value.read().is_empty() {
+                            Some(element! {
+                                Text(
+                                    content: "Type your message or @path/to/file",
+                                    color: Color::DarkGrey,
+                                )
+                            })
+                        } else {
+                            Some(element! {
+                                Text(
+                                    content: &input_value.to_string(),
+                                    color: Color::White,
+                                )
+                            })
+                        })
+                    }
+                }
+                // Status bar - 简约风格
                 View(
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
+                    padding: 1,
                 ) {
                     Text(
-                        content: "> ",
-                        color: Color::Rgb { r: 100, g: 149, b: 237 },
+                        content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
+                        color: Color::DarkGrey,
                     )
-                    #(if input_value.read().is_empty() {
-                        Some(element! {
-                            Text(
-                                content: "Type your message or @path/to/file",
-                                color: Color::DarkGrey,
-                            )
-                        })
-                    } else {
-                        Some(element! {
-                            Text(
-                                content: &input_value.to_string(),
-                                color: Color::White,
-                            )
-                        })
-                    })
                 }
-                }
-
-                // Status bar - 简约风格
-            View(
-                padding: 1,
-            ) {
-                Text(
-                    content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
-                    color: Color::DarkGrey,
-                )
-            }
             }
         }
     }
@@ -733,12 +735,12 @@ impl TokenTrackingOutputHandler {
     fn new(
         interactive_config: crate::output::interactive_handler::InteractiveOutputConfig,
         interactive_sender: mpsc::UnboundedSender<InteractiveMessage>,
-        ui_sender: mpsc::UnboundedSender<AppMessage>
+        ui_sender: mpsc::UnboundedSender<AppMessage>,
     ) -> Self {
         Self {
             interactive_handler: InteractiveOutputHandler::new(
                 interactive_config,
-                interactive_sender
+                interactive_sender,
             ),
             ui_sender,
         }
@@ -749,7 +751,7 @@ impl TokenTrackingOutputHandler {
 impl trae_agent_core::output::AgentOutput for TokenTrackingOutputHandler {
     async fn emit_event(
         &self,
-        event: trae_agent_core::output::AgentEvent
+        event: trae_agent_core::output::AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check for token updates in various events
         match &event {
@@ -779,9 +781,9 @@ async fn execute_agent_task(
     task: String,
     config: Config,
     project_path: PathBuf,
-    ui_sender: mpsc::UnboundedSender<AppMessage>
+    ui_sender: mpsc::UnboundedSender<AppMessage>,
 ) -> Result<()> {
-    use crate::output::interactive_handler::{ InteractiveOutputConfig };
+    use crate::output::interactive_handler::InteractiveOutputConfig;
 
     // Get agent configuration
     let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
@@ -802,17 +804,22 @@ async fn execute_agent_task(
         realtime_updates: true,
         show_tool_details: true,
     };
-    let token_tracking_output = Box::new(
-        TokenTrackingOutputHandler::new(interactive_config, interactive_sender, ui_sender)
-    );
+    let token_tracking_output = Box::new(TokenTrackingOutputHandler::new(
+        interactive_config,
+        interactive_sender,
+        ui_sender,
+    ));
 
     // Create and execute agent task
     let mut agent = trae_agent_core::agent::TraeAgent::new_with_output(
         agent_config,
         config,
-        token_tracking_output
-    ).await?;
-    agent.execute_task_with_context(&task, &project_path).await?;
+        token_tracking_output,
+    )
+    .await?;
+    agent
+        .execute_task_with_context(&task, &project_path)
+        .await?;
 
     Ok(())
 }
