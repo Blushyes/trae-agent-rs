@@ -320,6 +320,85 @@ impl Default for DynamicStatusLineProps {
     }
 }
 
+#[derive(Clone, Props)]
+struct InputSectionProps {
+    input_value: String,
+}
+
+impl Default for InputSectionProps {
+    fn default() -> Self {
+        Self {
+            input_value: String::new(),
+        }
+    }
+}
+
+/// Input Section Component - Fixed bottom area for input and status
+#[component]
+fn InputSection(_hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElement<'static>> {
+    let input_value = &props.input_value;
+
+    element! {
+        View(
+            key: "input-section",
+            flex_shrink: 0.0, // Prevent shrinking
+            flex_grow: 0.0,   // Prevent growing
+            flex_direction: FlexDirection::Column,
+            height: 5,        // Fixed height for input area
+            position: Position::Relative, // Ensure stable positioning
+        ) {
+            // Input area - 简约边框风格，单行高度
+            View(
+                key: "input-container",
+                border_style: BorderStyle::Round,
+                border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
+                padding_left: 1,
+                padding_right: 1,
+                padding_top: 0,
+                padding_bottom: 0,
+                margin_bottom: 1,
+                height: 3, // Fixed height to prevent expansion
+                flex_shrink: 0.0, // Prevent shrinking
+                flex_grow: 0.0,   // Prevent growing
+            ) {
+                View(
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                ) {
+                    Text(
+                        content: "> ",
+                        color: Color::Rgb { r: 100, g: 149, b: 237 },
+                    )
+                    #(if input_value.is_empty() {
+                        Some(element! {
+                            Text(
+                                content: "Type your message or @path/to/file",
+                                color: Color::DarkGrey,
+                            )
+                        })
+                    } else {
+                        Some(element! {
+                            Text(
+                                content: input_value,
+                                color: Color::White,
+                            )
+                        })
+                    })
+                }
+            }
+            // Status bar - 简约风格
+            View(
+                padding: 1,
+            ) {
+                Text(
+                    content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
+                    color: Color::DarkGrey,
+                )
+            }
+        }
+    }
+}
+
 /// Dynamic Status Line Component (Isolated to prevent parent re-rendering)
 #[component]
 fn DynamicStatusLine(
@@ -664,63 +743,10 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             )
 
             // Fixed bottom area for input and status - this should never move
-            View(
-                key: "input-section",
-                flex_shrink: 0.0, // Prevent shrinking
-                flex_grow: 0.0,   // Prevent growing
-                flex_direction: FlexDirection::Column,
-                height: 5,        // Fixed height for input area
-                position: Position::Relative, // Ensure stable positioning
-            ) {
-                // Input area - 简约边框风格，单行高度
-                View(
-                    key: "input-container",
-                    border_style: BorderStyle::Round,
-                    border_color: Color::Rgb { r: 100, g: 149, b: 237 }, // 蓝色边框
-                    padding_left: 1,
-                    padding_right: 1,
-                    padding_top: 0,
-                    padding_bottom: 0,
-                    margin_bottom: 1,
-                    height: 3, // Fixed height to prevent expansion
-                    flex_shrink: 0.0, // Prevent shrinking
-                    flex_grow: 0.0,   // Prevent growing
-                ) {
-                    View(
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                    ) {
-                        Text(
-                            content: "> ",
-                            color: Color::Rgb { r: 100, g: 149, b: 237 },
-                        )
-                        #(if input_value.read().is_empty() {
-                            Some(element! {
-                                Text(
-                                    content: "Type your message or @path/to/file",
-                                    color: Color::DarkGrey,
-                                )
-                            })
-                        } else {
-                            Some(element! {
-                                Text(
-                                    content: &input_value.to_string(),
-                                    color: Color::White,
-                                )
-                            })
-                        })
-                    }
-                }
-                // Status bar - 简约风格
-                View(
-                    padding: 1,
-                ) {
-                    Text(
-                        content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
-                        color: Color::DarkGrey,
-                    )
-                }
-            }
+            InputSection(
+                key: "input-section-component",
+                input_value: input_value.read().clone(),
+            )
         }
     }
 }
