@@ -768,16 +768,13 @@ fn DynamicStatusLine(
 
 /// Main TRAE Interactive Application Component
 #[component]
-fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    // Get terminal size for full screen rendering
-    let (width, height) = hooks.use_terminal_size();
-
+fn TraeApp() -> impl Into<AnyElement<'static>> {
     element! {
         View(
             key: "main-container",
             flex_direction: FlexDirection::Column,
-            width: width,
-            height: height - 1,
+            height: 100pct,
+            width: 100pct,
             padding: 1,
             position: Position::Relative, // Ensure stable positioning
         ) {
