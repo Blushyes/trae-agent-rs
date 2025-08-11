@@ -62,7 +62,7 @@ ignore = "0.4"
 # Process execution
 which = "8.0"
 
-[patch.crates-io]
-# Use local patched iocraft to fix non-fullscreen scroll artifacts
-iocraft = { path = "../../iocraft/packages/iocraft" }
-iocraft-macros = { path = "../../iocraft/packages/iocraft-macros" }
+# [patch.crates-io]
+# # Use local patched iocraft to fix non-fullscreen scroll artifacts
+# iocraft = { path = "../../iocraft/packages/iocraft" }
+# iocraft-macros = { path = "../../iocraft/packages/iocraft-macros" }
