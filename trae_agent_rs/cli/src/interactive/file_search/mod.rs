@@ -11,6 +11,7 @@ pub mod config;
 pub mod engine;
 pub mod fuzzy;
 pub mod git_integration;
+pub mod input_parser;
 pub mod provider;
 
 #[cfg(test)]
@@ -19,6 +20,7 @@ mod tests;
 // Export the main interfaces
 pub use config::SearchConfig;
 pub use engine::{FileSearchEngine, SearchResult};
+pub use input_parser::{extract_search_query, should_show_file_search};
 pub use provider::{DefaultFileSearchProvider, FileSearchProvider, FileSearchResult};
 
 /// Main search interface

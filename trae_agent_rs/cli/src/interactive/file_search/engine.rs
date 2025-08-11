@@ -105,6 +105,33 @@ impl FileSearchEngine {
             return self.get_all_files();
         }
 
+        // Check if query is an absolute path and convert to relative if needed
+        let search_query = if query.starts_with('/') {
+            // Try to convert absolute path to relative path
+            if let Ok(abs_path) = std::path::Path::new(query).canonicalize() {
+                if let Ok(rel_path) = abs_path.strip_prefix(&self.project_path) {
+                    rel_path.to_string_lossy().to_string()
+                } else {
+                    // Absolute path outside project, use as-is
+                    query.to_string()
+                }
+            } else {
+                // Invalid absolute path, try to make it relative by removing project path prefix
+                if let Some(project_str) = self.project_path.to_str() {
+                    if query.starts_with(project_str) {
+                        let relative = &query[project_str.len()..];
+                        relative.trim_start_matches('/').to_string()
+                    } else {
+                        query.to_string()
+                    }
+                } else {
+                    query.to_string()
+                }
+            }
+        } else {
+            query.to_string()
+        };
+
         let mut results = Vec::new();
 
         // Search through cached files
@@ -114,23 +141,24 @@ impl FileSearchEngine {
                 continue;
             }
 
-            // Try to match the query against file name and relative path
-            let name_match = self.matcher.match_string(query, &file.name);
-            let path_match = self.matcher.match_string(query, &file.relative_path);
+            // Try to match the query against file name, relative path, and absolute path
+            let name_match = self.matcher.match_string(&search_query, &file.name);
+            let relative_path_match = self
+                .matcher
+                .match_string(&search_query, &file.relative_path);
+            let absolute_path_match = self
+                .matcher
+                .match_string(&search_query, &file.path.to_string_lossy());
 
-            // Use the better of the two matches
-            let best_match = match (name_match, path_match) {
-                (Some(name), Some(path)) => {
-                    if name.score >= path.score {
-                        Some(name)
-                    } else {
-                        Some(path)
-                    }
-                }
-                (Some(name), None) => Some(name),
-                (None, Some(path)) => Some(path),
-                (None, None) => None,
-            };
+            // Use the best of the three matches
+            let best_match = [name_match, relative_path_match, absolute_path_match]
+                .into_iter()
+                .flatten()
+                .max_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
 
             if let Some(match_score) = best_match {
                 if match_score.score >= self.config.min_score_threshold {

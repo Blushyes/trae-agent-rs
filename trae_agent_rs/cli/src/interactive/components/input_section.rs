@@ -3,6 +3,7 @@
 //! This module provides the input section component that handles
 //! user input and displays the status bar.
 
+use crate::interactive::file_search::{extract_search_query, should_show_file_search};
 use crate::interactive::file_search::{
     DefaultFileSearchProvider, FileSearchProvider, FileSearchResult,
 };
@@ -13,36 +14,6 @@ use std::path::PathBuf;
 use tokio::sync::broadcast;
 use trae_agent_core::Config;
 use unicode_width::UnicodeWidthStr;
-
-/// Extract search query from input value after the last @
-fn extract_search_query(value: &str, cursor_pos: usize) -> Option<String> {
-    // Find the last @ before cursor position
-    let safe_cursor_pos = cursor_pos.min(value.len());
-    let before_cursor = &value[..safe_cursor_pos];
-    if let Some(at_pos) = before_cursor.rfind('@') {
-        // Check if @ is at the beginning or after a space/newline
-        let is_valid_at = if at_pos == 0 {
-            true
-        } else if let Some(prev_char) = value.chars().nth(at_pos.saturating_sub(1)) {
-            prev_char == ' ' || prev_char == '\n'
-        } else {
-            false
-        };
-
-        if is_valid_at {
-            // Extract query from @ to cursor position
-            let query_start = at_pos + 1;
-            if query_start <= cursor_pos {
-                let query = &value[query_start..cursor_pos];
-                // Make sure query doesn't contain spaces (which would end the search)
-                if !query.contains(' ') && !query.contains('\n') {
-                    return Some(query.to_string());
-                }
-            }
-        }
-    }
-    None
-}
 
 #[derive(Clone, Props)]
 pub struct InputSectionProps {
@@ -190,16 +161,27 @@ pub fn EnhancedTextInput(
                                 if let Some(selected_result) =
                                     search_results.read().get(selected_file_index.get())
                                 {
-                                    // Find the @ position and replace it with the file path
-                                    if let Some(at_pos) = value.rfind('@') {
-                                        let before_at = &value[..at_pos];
-                                        let after_at = &value[at_pos + 1..];
-                                        let insertion_text = &selected_result.insertion_path;
-                                        value =
-                                            format!("{}{}{}", before_at, insertion_text, after_at);
-                                        pos = at_pos + insertion_text.len();
-                                        cursor_pos.set(pos);
-                                        on_change(value.clone());
+                                    // Find the @ position and replace the entire @search_term with @absolute_path + space
+                                    if let Some(query) = extract_search_query(&value, pos) {
+                                        if let Some(at_pos) = value.rfind('@') {
+                                            // Find the end of the search term
+                                            let search_end = at_pos + 1 + query.len();
+
+                                            let before_at = &value[..at_pos];
+                                            let after_search = &value[search_end..];
+
+                                            // Create replacement: @absolute_path + space
+                                            let replacement =
+                                                format!("@{} ", selected_result.insertion_path);
+
+                                            value = format!(
+                                                "{}{}{}",
+                                                before_at, replacement, after_search
+                                            );
+                                            pos = at_pos + replacement.len();
+                                            cursor_pos.set(pos);
+                                            on_change(value.clone());
+                                        }
                                     }
                                 }
                                 show_file_list.set(false);
@@ -219,21 +201,6 @@ pub fn EnhancedTextInput(
                             let safe_pos = pos.min(value.len());
                             let char_pos = value[..safe_pos].chars().count();
 
-                            // Check if we should show file list after typing @
-                            let should_show_list = if c == '@' {
-                                if char_pos == 0 {
-                                    true
-                                } else if let Some(prev_char) =
-                                    value.chars().nth(char_pos.saturating_sub(1))
-                                {
-                                    prev_char == ' ' || prev_char == '\n'
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-
                             let mut chars: Vec<char> = value.chars().collect();
                             chars.insert(char_pos, c);
                             value = chars.into_iter().collect();
@@ -246,19 +213,13 @@ pub fn EnhancedTextInput(
                                 .unwrap_or(value.len());
                             changed = true;
 
-                            if should_show_list {
-                                // Initialize search with empty query (show all files)
-                                if let Some(search_provider) = search_provider.read().as_ref() {
-                                    let results = search_provider.get_all_files();
-                                    search_results.set(results);
-                                    selected_file_index.set(0);
-                                    current_query.set(String::new());
-                                    show_file_list.set(true);
-                                }
-                            } else if *show_file_list.read() {
-                                // Update search if we're already showing the list
+                            // Check if we should show/update/hide file list after character input
+                            let should_show = should_show_file_search(&value, pos);
+
+                            if should_show {
                                 if let Some(query) = extract_search_query(&value, pos) {
-                                    if query != *current_query.read() {
+                                    // Show list and update search if needed
+                                    if !*show_file_list.read() || query != *current_query.read() {
                                         if let Some(search_provider) =
                                             search_provider.read().as_ref()
                                         {
@@ -270,12 +231,13 @@ pub fn EnhancedTextInput(
                                             search_results.set(results);
                                             selected_file_index.set(0);
                                             current_query.set(query);
+                                            show_file_list.set(true);
                                         }
                                     }
-                                } else {
-                                    // No valid query found, hide the list
-                                    show_file_list.set(false);
                                 }
+                            } else {
+                                // Should not show list, hide it
+                                show_file_list.set(false);
                             }
                         }
                         KeyCode::Backspace => {
@@ -297,10 +259,15 @@ pub fn EnhancedTextInput(
                                     pos = char_start;
                                     changed = true;
 
-                                    // Update search or hide file list
-                                    if *show_file_list.read() {
+                                    // Check if we should show/update/hide file list after backspace
+                                    let should_show = should_show_file_search(&value, pos);
+
+                                    if should_show {
                                         if let Some(query) = extract_search_query(&value, pos) {
-                                            if query != *current_query.read() {
+                                            // Show list and update search if needed
+                                            if !*show_file_list.read()
+                                                || query != *current_query.read()
+                                            {
                                                 if let Some(search_provider) =
                                                     search_provider.read().as_ref()
                                                 {
@@ -312,12 +279,13 @@ pub fn EnhancedTextInput(
                                                     search_results.set(results);
                                                     selected_file_index.set(0);
                                                     current_query.set(query);
+                                                    show_file_list.set(true);
                                                 }
                                             }
-                                        } else {
-                                            // No valid query found, hide the list
-                                            show_file_list.set(false);
                                         }
+                                    } else {
+                                        // Should not show list, hide it
+                                        show_file_list.set(false);
                                     }
                                 }
                             }
@@ -775,9 +743,8 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                         // Clear input immediately
                         input_value.set(String::new());
 
-                        // Broadcast user message and start task
-                        let _ = ui_sender.send(AppMessage::UserMessage(input.clone()));
-                        spawn_ui_agent_task(
+                        // Use enhanced task submission with file reference processing
+                        crate::interactive::app::submit_task_with_file_processing(
                             input,
                             config.clone(),
                             project_path.clone(),

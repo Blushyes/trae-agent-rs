@@ -59,14 +59,16 @@ pub fn output_content_block<T: OutputHandle>(
         }
     }
 
-    // Add empty line after each block for proper spacing, except for ToolStatus
-    if !matches!(block_type, ContentBlock::ToolStatus) {
+    // Add empty line after each block for proper spacing, except for ToolStatus and ToolResult
+    if !matches!(
+        block_type,
+        ContentBlock::ToolStatus | ContentBlock::ToolResult
+    ) {
         stdout.println("");
         // Return total lines including the empty line
         wrapped_lines.len() + 1
     } else {
-        // For ToolStatus, do not add a trailing empty line so that the following
-        // ToolResult can visually attach to it as a single block
+        // For ToolStatus and ToolResult, do not add a trailing empty line for compact display
         wrapped_lines.len()
     }
 }
@@ -128,14 +130,16 @@ pub fn overwrite_previous_lines<T: OutputHandle>(
         }
     }
 
-    // Add empty line after each block for proper spacing, except for ToolStatus
-    if !matches!(block_type, ContentBlock::ToolStatus) {
+    // Add empty line after each block for proper spacing, except for ToolStatus and ToolResult
+    if !matches!(
+        block_type,
+        ContentBlock::ToolStatus | ContentBlock::ToolResult
+    ) {
         stdout.println("");
         // Return total lines including the empty line
         wrapped_lines.len() + 1
     } else {
-        // For ToolStatus, do not add a trailing empty line so that the following
-        // ToolResult can visually attach to it as a single block
+        // For ToolStatus and ToolResult, do not add a trailing empty line for compact display
         wrapped_lines.len()
     }
 }
