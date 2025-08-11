@@ -149,7 +149,51 @@ pub fn EnhancedTextInput(
                             }
                         }
                         KeyCode::Enter => {
-                            if modifiers.contains(KeyModifiers::SHIFT) {
+                            // Check if current line ends with backslash
+                            let current_line_end_with_backslash = {
+                                // Find the current line by looking backwards from cursor position
+                                let before_cursor = &value[..pos];
+                                let current_line_start =
+                                    before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+                                // Find the end of current line by looking forward from cursor
+                                let after_cursor = &value[pos..];
+                                let current_line_end = after_cursor
+                                    .find('\n')
+                                    .map(|i| pos + i)
+                                    .unwrap_or(value.len());
+
+                                // Get the current line content
+                                let current_line = &value[current_line_start..current_line_end];
+                                current_line.trim_end().ends_with('\\')
+                            };
+
+                            if current_line_end_with_backslash {
+                                // Remove the trailing backslash and add newline
+                                let before_cursor = &value[..pos];
+                                let current_line_start =
+                                    before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+                                let after_cursor = &value[pos..];
+                                let current_line_end = after_cursor
+                                    .find('\n')
+                                    .map(|i| pos + i)
+                                    .unwrap_or(value.len());
+
+                                let current_line = &value[current_line_start..current_line_end];
+                                let trimmed_line = current_line.trim_end();
+
+                                if let Some(backslash_pos) = trimmed_line.rfind('\\') {
+                                    // Create new string parts to avoid borrowing conflicts
+                                    let new_line = trimmed_line[..backslash_pos].to_string();
+                                    let before_line = value[..current_line_start].to_string();
+                                    let after_line = value[current_line_end..].to_string();
+
+                                    value = format!("{}{}\n{}", before_line, new_line, after_line);
+                                    pos = current_line_start + new_line.len() + 1; // Position after newline
+                                    changed = true;
+                                }
+                            } else if modifiers.contains(KeyModifiers::SHIFT) {
                                 // Shift+Enter adds newline - use safe character insertion
                                 let char_pos = value[..pos].chars().count();
                                 let mut chars: Vec<char> = value.chars().collect();
