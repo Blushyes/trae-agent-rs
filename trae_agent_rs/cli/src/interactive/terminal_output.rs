@@ -1,5 +1,5 @@
 //! Terminal output abstraction and formatting utilities
-//! 
+//!
 //! This module provides terminal output abstractions and formatting functions
 //! that work with the AgentOutput system while providing terminal-specific features.
 
@@ -59,11 +59,16 @@ pub fn output_content_block<T: OutputHandle>(
         }
     }
 
-    // Add empty line after each block for proper spacing
-    stdout.println("");
-
-    // Return total lines including the empty line
-    wrapped_lines.len() + 1
+    // Add empty line after each block for proper spacing, except for ToolStatus
+    if !matches!(block_type, ContentBlock::ToolStatus) {
+        stdout.println("");
+        // Return total lines including the empty line
+        wrapped_lines.len() + 1
+    } else {
+        // For ToolStatus, do not add a trailing empty line so that the following
+        // ToolResult can visually attach to it as a single block
+        wrapped_lines.len()
+    }
 }
 
 /// Overwrite previous lines in terminal output using ANSI escape sequences with block-based formatting
@@ -85,7 +90,7 @@ pub fn overwrite_previous_lines<T: OutputHandle>(
     previous_line_count: usize,
 ) -> usize {
     use super::message_handler::{identify_content_block, is_bash_output_content};
-    
+
     let block_type = identify_content_block(content, role);
     let is_bash_output = is_bash_output_content(content);
     let wrapped_lines = wrap_text(content, terminal_width);
@@ -123,11 +128,16 @@ pub fn overwrite_previous_lines<T: OutputHandle>(
         }
     }
 
-    // Add empty line after each block for proper spacing
-    stdout.println("");
-
-    // Return total lines including the empty line
-    wrapped_lines.len() + 1
+    // Add empty line after each block for proper spacing, except for ToolStatus
+    if !matches!(block_type, ContentBlock::ToolStatus) {
+        stdout.println("");
+        // Return total lines including the empty line
+        wrapped_lines.len() + 1
+    } else {
+        // For ToolStatus, do not add a trailing empty line so that the following
+        // ToolResult can visually attach to it as a single block
+        wrapped_lines.len()
+    }
 }
 
 /// Update status line at a specific position using ANSI escape sequences
@@ -232,14 +242,8 @@ mod tests {
     #[test]
     fn test_output_content_block() {
         let mock = MockOutputHandle::new();
-        let lines = output_content_block(
-            &mock,
-            "Test content",
-            ContentBlock::AgentText,
-            80,
-            false,
-        );
-        
+        let lines = output_content_block(&mock, "Test content", ContentBlock::AgentText, 80, false);
+
         let output = mock.get_output();
         assert!(!output.is_empty());
         assert!(lines > 0);

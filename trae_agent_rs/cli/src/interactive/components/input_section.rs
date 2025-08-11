@@ -101,9 +101,9 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                             input_value.set(current_input);
                         }
                         KeyCode::Backspace => {
-                            let current = input_value.read().clone();
-                            if !current.is_empty() {
-                                input_value.set(current[..current.len() - 1].to_string());
+                            let mut current = input_value.read().clone();
+                            if current.pop().is_some() {
+                                input_value.set(current);
                             }
                         }
                         KeyCode::Enter => {
