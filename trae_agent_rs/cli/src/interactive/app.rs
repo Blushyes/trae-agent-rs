@@ -42,6 +42,58 @@ fn get_terminal_width() -> usize {
     }
 }
 
+/// Overwrite previous lines in terminal output using ANSI escape sequences
+///
+/// # Parameters
+/// - `stdout`: Output handler to write to
+/// - `content`: New content to display
+/// - `terminal_width`: Width for text wrapping
+/// - `previous_line_count`: Number of lines the previous message occupied
+///
+/// # Returns
+/// The number of lines the new content occupies (including empty line)
+fn overwrite_previous_lines<T: OutputHandle>(
+    stdout: &T,
+    content: &str,
+    terminal_width: usize,
+    previous_line_count: usize,
+) -> usize {
+    let wrapped_lines = wrap_text(content, terminal_width);
+    let new_total_lines = wrapped_lines.len() + 1; // +1 for empty line
+
+    // Move cursor up to overwrite the previous message and clear from cursor to end of screen
+    for (i, line) in wrapped_lines.iter().enumerate() {
+        if i == 0 {
+            // For the first line, move up and clear from cursor to end of screen, then write new content
+            stdout.println(format!("\x1b[{}A\x1b[0J{}", previous_line_count, line));
+        } else {
+            stdout.println(line);
+        }
+    }
+    stdout.println(""); // Empty line for spacing
+
+    new_total_lines
+}
+
+/// Trait to abstract over different output handles (StdoutHandle, StderrHandle)
+trait OutputHandle {
+    fn println<S: ToString>(&self, msg: S);
+}
+
+/// Implementation for iocraft's StdoutHandle
+impl OutputHandle for iocraft::hooks::StdoutHandle {
+    fn println<S: ToString>(&self, msg: S) {
+        self.println(msg);
+    }
+}
+
+/// Implementation for iocraft's StderrHandle
+impl OutputHandle for iocraft::hooks::StderrHandle {
+    fn println<S: ToString>(&self, msg: S) {
+        self.println(msg);
+    }
+}
+
 /// Wrap text to fit within specified width, breaking at word boundaries
 /// Uses unicode-aware width calculation for proper handling of CJK characters
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
@@ -606,6 +658,8 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let show_tips = hooks.use_state(|| true);
     let header_rendered = hooks.use_state(|| false);
     let messages = hooks.use_state(|| Vec::<(String, String, Option<String>)>::new());
+    // Track line counts for each message to enable proper overwriting
+    let message_line_counts = hooks.use_state(|| std::collections::HashMap::<String, usize>::new());
 
     let (width, _height) = hooks.use_terminal_size();
     // Get current terminal width and reserve space for padding/borders
@@ -672,12 +726,14 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     // Subscribe to UI events for messages output
     let ui_sender_messages = ui_sender.clone();
     let mut messages_clone = messages.clone();
+    let mut message_line_counts_clone = message_line_counts.clone();
     let stdout_messages = stdout.clone();
     hooks.use_future(async move {
         let mut rx = ui_sender_messages.subscribe();
         while let Ok(app_message) = rx.recv().await {
             if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
                 let mut current = messages_clone.read().clone();
+                let mut line_counts = message_line_counts_clone.read().clone();
                 let is_new_message = if let Some(msg_id) = &message_id {
                     if let Some(pos) = current
                         .iter()
@@ -699,6 +755,8 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 // For updated messages (like tool status changes), we need to handle the replacement
                 if is_new_message {
                     let wrapped_lines = wrap_text(&content, terminal_width);
+                    let total_lines = wrapped_lines.len() + 1; // +1 for empty line
+
                     if role == "user" {
                         for (i, line) in wrapped_lines.iter().enumerate() {
                             if i == 0 {
@@ -713,23 +771,38 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                         }
                     }
                     stdout_messages.println(""); // Empty line for spacing
+
+                    // Store line count for this message
+                    if let Some(msg_id) = &message_id {
+                        line_counts.insert(msg_id.clone(), total_lines);
+                    }
                 } else {
                     // This is an updated message (e.g., tool status change from executing to completed)
                     // We need to replace the previous line with the new content
-                    // Since we can't reliably mix print! with iocraft's output system,
-                    // we'll include the ANSI escape codes in the content itself
-                    let wrapped_lines = wrap_text(&content, terminal_width);
-                    for (i, line) in wrapped_lines.iter().enumerate() {
-                        if i == 0 {
-                            // For the first line, prepend ANSI codes to move up and clear
-                            stdout_messages.println(format!("\x1b[1A\x1b[2K\r{}", line));
-                        } else {
-                            stdout_messages.println(line);
-                        }
+
+                    // Get the previous line count for this message
+                    let previous_lines = if let Some(msg_id) = &message_id {
+                        line_counts.get(msg_id).copied().unwrap_or(2) // Default to 2 lines if not found
+                    } else {
+                        2 // Default fallback
+                    };
+
+                    // Use the helper function to overwrite previous lines
+                    let new_total_lines = overwrite_previous_lines(
+                        &stdout_messages,
+                        &content,
+                        terminal_width,
+                        previous_lines,
+                    );
+
+                    // Update line count for this message
+                    if let Some(msg_id) = &message_id {
+                        line_counts.insert(msg_id.clone(), new_total_lines);
                     }
                 }
 
                 messages_clone.set(current);
+                message_line_counts_clone.set(line_counts);
             }
         }
     });
