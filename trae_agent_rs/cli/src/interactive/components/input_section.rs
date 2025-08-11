@@ -117,20 +117,29 @@ pub fn EnhancedTextInput(
                         }
                         KeyCode::Delete => {
                             if pos < value.len() {
-                                value.remove(pos);
-                                changed = true;
+                                // Find the next character boundary to delete safely
+                                if let Some(ch) = value[pos..].chars().next() {
+                                    // Convert to chars, remove one, and rebuild string
+                                    let mut chars: Vec<char> = value.chars().collect();
+                                    let char_pos = value[..pos].chars().count();
+                                    if char_pos < chars.len() {
+                                        chars.remove(char_pos);
+                                        value = chars.into_iter().collect();
+                                        changed = true;
+                                    }
+                                }
                             }
                         }
                         KeyCode::Enter => {
-                            if modifiers.contains(KeyModifiers::CONTROL) {
-                                // Ctrl+Enter submits
-                                on_submit(value.clone());
-                                return;
-                            } else {
-                                // Regular Enter adds newline
+                            if modifiers.contains(KeyModifiers::SHIFT) {
+                                // Shift+Enter adds newline
                                 value.insert(pos, '\n');
                                 pos += 1;
                                 changed = true;
+                            } else {
+                                // Regular Enter submits
+                                on_submit(value.clone());
+                                return;
                             }
                         }
                         KeyCode::Left => {
@@ -402,7 +411,7 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                 value: input_value.to_string(),
                 has_focus: !*is_task_running.read(),
                 width: input_width,
-                placeholder: "Type your message or @path/to/file (Ctrl+Enter to send, Enter for new line)".to_string(),
+                placeholder: "Type your message or @path/to/file (Enter to send, Shift+Enter for new line)".to_string(),
                 color: Some(Color::White),
                 cursor_color: Some(Color::Rgb { r: 100, g: 149, b: 237 }),
                 on_change: {
