@@ -105,14 +105,22 @@ pub fn EnhancedTextInput(
                         }
                         KeyCode::Backspace => {
                             if pos > 0 {
+                                // Find the start of the previous character
                                 let char_start = value[..pos]
                                     .char_indices()
                                     .last()
                                     .map(|(i, _)| i)
                                     .unwrap_or(0);
-                                value.remove(char_start);
-                                pos = char_start;
-                                changed = true;
+
+                                // Convert to chars, remove the previous character, and rebuild string
+                                let mut chars: Vec<char> = value.chars().collect();
+                                let char_pos = value[..pos].chars().count();
+                                if char_pos > 0 {
+                                    chars.remove(char_pos - 1);
+                                    value = chars.into_iter().collect();
+                                    pos = char_start;
+                                    changed = true;
+                                }
                             }
                         }
                         KeyCode::Delete => {
