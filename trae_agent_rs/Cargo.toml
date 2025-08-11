@@ -38,8 +38,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 
 # Terminal UI
-iocraft = { git = "https://github.com/Blushyes/iocraft" }
-# iocraft = "0.7"
+# iocraft = { git = "https://github.com/Blushyes/iocraft" }
+iocraft = "0.7"
 crossterm = "0.29"
 smol = "2.0"
 
@@ -61,3 +61,8 @@ ignore = "0.4"
 
 # Process execution
 which = "8.0"
+
+[patch.crates-io]
+# Use local patched iocraft to fix non-fullscreen scroll artifacts
+iocraft = { path = "../../iocraft/packages/iocraft" }
+iocraft-macros = { path = "../../iocraft/packages/iocraft-macros" }
