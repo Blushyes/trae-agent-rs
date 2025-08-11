@@ -17,7 +17,8 @@ use unicode_width::UnicodeWidthStr;
 /// Extract search query from input value after the last @
 fn extract_search_query(value: &str, cursor_pos: usize) -> Option<String> {
     // Find the last @ before cursor position
-    let before_cursor = &value[..cursor_pos];
+    let safe_cursor_pos = cursor_pos.min(value.len());
+    let before_cursor = &value[..safe_cursor_pos];
     if let Some(at_pos) = before_cursor.rfind('@') {
         // Check if @ is at the beginning or after a space/newline
         let is_valid_at = if at_pos == 0 {
@@ -215,7 +216,8 @@ pub fn EnhancedTextInput(
                     match code {
                         KeyCode::Char(c) => {
                             // Ensure we're at a character boundary before inserting
-                            let char_pos = value[..pos].chars().count();
+                            let safe_pos = pos.min(value.len());
+                            let char_pos = value[..safe_pos].chars().count();
 
                             // Check if we should show file list after typing @
                             let should_show_list = if c == '@' {
@@ -279,7 +281,8 @@ pub fn EnhancedTextInput(
                         KeyCode::Backspace => {
                             if pos > 0 {
                                 // Find the start of the previous character
-                                let char_start = value[..pos]
+                                let safe_pos = pos.min(value.len());
+                                let char_start = value[..safe_pos]
                                     .char_indices()
                                     .last()
                                     .map(|(i, _)| i)
@@ -287,7 +290,7 @@ pub fn EnhancedTextInput(
 
                                 // Convert to chars, remove the previous character, and rebuild string
                                 let mut chars: Vec<char> = value.chars().collect();
-                                let char_pos = value[..pos].chars().count();
+                                let char_pos = value[..safe_pos].chars().count();
                                 if char_pos > 0 {
                                     chars.remove(char_pos - 1);
                                     value = chars.into_iter().collect();
@@ -325,7 +328,8 @@ pub fn EnhancedTextInput(
                                 if value[pos..].chars().next().is_some() {
                                     // Convert to chars, remove one, and rebuild string
                                     let mut chars: Vec<char> = value.chars().collect();
-                                    let char_pos = value[..pos].chars().count();
+                                    let safe_pos = pos.min(value.len());
+                                    let char_pos = value[..safe_pos].chars().count();
                                     if char_pos < chars.len() {
                                         chars.remove(char_pos);
                                         value = chars.into_iter().collect();
@@ -361,7 +365,8 @@ pub fn EnhancedTextInput(
                             // Check if current line ends with backslash
                             let current_line_end_with_backslash = {
                                 // Find the current line by looking backwards from cursor position
-                                let before_cursor = &value[..pos];
+                                let safe_pos = pos.min(value.len());
+                                let before_cursor = &value[..safe_pos];
                                 let current_line_start =
                                     before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
 
@@ -379,7 +384,8 @@ pub fn EnhancedTextInput(
 
                             if current_line_end_with_backslash {
                                 // Remove the trailing backslash and add newline
-                                let before_cursor = &value[..pos];
+                                let safe_pos = pos.min(value.len());
+                                let before_cursor = &value[..safe_pos];
                                 let current_line_start =
                                     before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
 
@@ -404,7 +410,8 @@ pub fn EnhancedTextInput(
                                 }
                             } else if modifiers.contains(KeyModifiers::SHIFT) {
                                 // Shift+Enter adds newline - use safe character insertion
-                                let char_pos = value[..pos].chars().count();
+                                let safe_pos = pos.min(value.len());
+                                let char_pos = value[..safe_pos].chars().count();
                                 let mut chars: Vec<char> = value.chars().collect();
                                 chars.insert(char_pos, '\n');
                                 value = chars.into_iter().collect();
@@ -424,7 +431,8 @@ pub fn EnhancedTextInput(
                         }
                         KeyCode::Left => {
                             if pos > 0 {
-                                let char_start = value[..pos]
+                                let safe_pos = pos.min(value.len());
+                                let char_start = value[..safe_pos]
                                     .char_indices()
                                     .last()
                                     .map(|(i, _)| i)
