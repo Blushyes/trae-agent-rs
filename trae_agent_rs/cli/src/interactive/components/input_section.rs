@@ -3,7 +3,9 @@
 //! This module provides the input section component that handles
 //! user input and displays the status bar.
 
-use crate::interactive::file_search::{FileSearchSystem, SearchConfig, SearchResult};
+use crate::interactive::file_search::{
+    DefaultFileSearchProvider, FileSearchProvider, FileSearchResult,
+};
 use crate::interactive::message_handler::AppMessage;
 use iocraft::prelude::*;
 use std::cmp::min;
@@ -111,15 +113,13 @@ pub fn EnhancedTextInput(
 
     // State for file search popup
     let show_file_list = hooks.use_state(|| false);
-    let search_results = hooks.use_state(|| Vec::<SearchResult>::new());
+    let search_results = hooks.use_state(|| Vec::<FileSearchResult>::new());
     let selected_file_index = hooks.use_state(|| 0usize);
     let current_query = hooks.use_state(|| String::new());
 
-    // Initialize search system
-    let search_system = hooks.use_state(|| {
-        let config = SearchConfig::default();
-        FileSearchSystem::new(project_path.clone(), config).ok()
-    });
+    // Initialize search provider
+    let search_provider =
+        hooks.use_state(|| DefaultFileSearchProvider::new(project_path.clone()).ok());
 
     // Handle keyboard input
     hooks.use_terminal_events({
@@ -131,7 +131,7 @@ pub fn EnhancedTextInput(
         let mut search_results = search_results.clone();
         let mut selected_file_index = selected_file_index.clone();
         let mut current_query = current_query.clone();
-        let search_system = search_system.clone();
+        let search_provider = search_provider.clone();
         let _project_path = project_path.clone();
 
         move |event| {
@@ -193,7 +193,7 @@ pub fn EnhancedTextInput(
                                     if let Some(at_pos) = value.rfind('@') {
                                         let before_at = &value[..at_pos];
                                         let after_at = &value[at_pos + 1..];
-                                        let insertion_text = selected_result.get_insertion_text();
+                                        let insertion_text = &selected_result.insertion_path;
                                         value =
                                             format!("{}{}{}", before_at, insertion_text, after_at);
                                         pos = at_pos + insertion_text.len();
@@ -246,8 +246,8 @@ pub fn EnhancedTextInput(
 
                             if should_show_list {
                                 // Initialize search with empty query (show all files)
-                                if let Some(search_sys) = search_system.read().as_ref() {
-                                    let results = search_sys.get_all_files();
+                                if let Some(search_provider) = search_provider.read().as_ref() {
+                                    let results = search_provider.get_all_files();
                                     search_results.set(results);
                                     selected_file_index.set(0);
                                     current_query.set(String::new());
@@ -257,11 +257,13 @@ pub fn EnhancedTextInput(
                                 // Update search if we're already showing the list
                                 if let Some(query) = extract_search_query(&value, pos) {
                                     if query != *current_query.read() {
-                                        if let Some(search_sys) = search_system.read().as_ref() {
+                                        if let Some(search_provider) =
+                                            search_provider.read().as_ref()
+                                        {
                                             let results = if query.is_empty() {
-                                                search_sys.get_all_files()
+                                                search_provider.get_all_files()
                                             } else {
-                                                search_sys.search(&query)
+                                                search_provider.search(&query)
                                             };
                                             search_results.set(results);
                                             selected_file_index.set(0);
@@ -296,13 +298,13 @@ pub fn EnhancedTextInput(
                                     if *show_file_list.read() {
                                         if let Some(query) = extract_search_query(&value, pos) {
                                             if query != *current_query.read() {
-                                                if let Some(search_sys) =
-                                                    search_system.read().as_ref()
+                                                if let Some(search_provider) =
+                                                    search_provider.read().as_ref()
                                                 {
                                                     let results = if query.is_empty() {
-                                                        search_sys.get_all_files()
+                                                        search_provider.get_all_files()
                                                     } else {
-                                                        search_sys.search(&query)
+                                                        search_provider.search(&query)
                                                     };
                                                     search_results.set(results);
                                                     selected_file_index.set(0);
@@ -333,13 +335,13 @@ pub fn EnhancedTextInput(
                                         if *show_file_list.read() {
                                             if let Some(query) = extract_search_query(&value, pos) {
                                                 if query != *current_query.read() {
-                                                    if let Some(search_sys) =
-                                                        search_system.read().as_ref()
+                                                    if let Some(search_provider) =
+                                                        search_provider.read().as_ref()
                                                     {
                                                         let results = if query.is_empty() {
-                                                            search_sys.get_all_files()
+                                                            search_provider.get_all_files()
                                                         } else {
-                                                            search_sys.search(&query)
+                                                            search_provider.search(&query)
                                                         };
                                                         search_results.set(results);
                                                         selected_file_index.set(0);

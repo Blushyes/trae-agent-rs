@@ -11,15 +11,15 @@ pub mod config;
 pub mod engine;
 pub mod fuzzy;
 pub mod git_integration;
+pub mod provider;
 
 #[cfg(test)]
 mod tests;
 
-pub use cache::FileCache;
+// Export the main interfaces
 pub use config::SearchConfig;
 pub use engine::{FileSearchEngine, SearchResult};
-pub use fuzzy::{FuzzyMatcher, MatchScore};
-pub use git_integration::GitIgnoreFilter;
+pub use provider::{DefaultFileSearchProvider, FileSearchProvider, FileSearchResult};
 
 /// Main search interface
 pub struct FileSearchSystem {
