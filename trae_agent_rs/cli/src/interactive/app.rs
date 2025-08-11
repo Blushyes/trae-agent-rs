@@ -298,28 +298,45 @@ pub async fn run_rich_interactive(config: Config, project_path: PathBuf) -> Resu
     Ok(())
 }
 
-// Static logo constant to prevent re-creation
-const TRAE_LOGO: &str = r#"
- ███
-░░░███
-  ░░░███
-    ░░░███
-     ███░
-   ███░
- ███░
-░░░
-"#;
+// Static logo lines with individual colors for gradient effect
+const TRAE_LOGO_LINES: &[&str] = &[
+    " ███",
+    "░░░███",
+    "  ░░░███",
+    "    ░░░███",
+    "     ███░",
+    "   ███░",
+    " ███░",
+    "░░░",
+];
 
-/// TRAE ASCII Art Logo Component (Static to prevent re-rendering)
+// Color gradient from bright green to darker green
+const LOGO_COLORS: &[(u8, u8, u8)] = &[
+    (0, 255, 127), // Bright green
+    (0, 240, 120), // Slightly darker
+    (0, 225, 113), // Medium bright
+    (0, 210, 106), // Medium
+    (0, 195, 99),  // Medium dark
+    (0, 180, 92),  // Darker
+    (0, 165, 85),  // Dark
+    (0, 150, 78),  // Darkest
+];
+
+/// TRAE ASCII Art Logo Component with gradient colors
 #[component]
 fn TraeLogo(_hooks: Hooks) -> impl Into<AnyElement<'static>> {
     element! {
-        View(key: "logo-content") {
-            Text(
-                content: TRAE_LOGO,
-                color: Color::Rgb { r: 0, g: 255, b: 127 }, // 使用更鲜艳的绿色渐变
-                weight: Weight::Bold,
-            )
+        View(key: "logo-content", flex_direction: FlexDirection::Column) {
+            #(TRAE_LOGO_LINES.iter().enumerate().map(|(i, line)| {
+                let color = LOGO_COLORS.get(i).unwrap_or(&(0, 150, 78));
+                element! {
+                    Text(
+                        content: *line,
+                        color: Color::Rgb { r: color.0, g: color.1, b: color.2 },
+                        weight: Weight::Bold,
+                    )
+                }
+            }).collect::<Vec<_>>())
         }
     }
 }
@@ -625,10 +642,16 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut header_rendered_clone = header_rendered.clone();
     hooks.use_future(async move {
         if !*header_rendered_clone.read() {
-            // Output TRAE logo line by line
-            for line in TRAE_LOGO.lines() {
+            // Output TRAE logo line by line with colors
+            for (i, line) in TRAE_LOGO_LINES.iter().enumerate() {
                 if !line.trim().is_empty() {
-                    stdout_clone.println(line);
+                    let color = LOGO_COLORS.get(i).unwrap_or(&(0, 150, 78));
+                    // Use ANSI color codes for terminal output
+                    let colored_line = format!(
+                        "\x1b[38;2;{};{};{}m{}\x1b[0m",
+                        color.0, color.1, color.2, line
+                    );
+                    stdout_clone.println(colored_line);
                 }
             }
             stdout_clone.println(""); // Empty line after logo
