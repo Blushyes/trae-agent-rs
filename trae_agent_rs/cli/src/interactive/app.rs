@@ -61,10 +61,16 @@ fn parse_file_references(input: &str, project_path: &PathBuf) -> Vec<FileReferen
     references
 }
 
-/// Read file content and return formatted content for AI context
+/// Read file content or directory metadata and return formatted content for AI context
 async fn read_file_content(file_path: &PathBuf) -> Result<String> {
     use tokio::fs;
 
+    // Check if path is a directory
+    if file_path.is_dir() {
+        return read_directory_metadata(file_path).await;
+    }
+
+    // Handle regular files
     let content = fs::read_to_string(file_path).await?;
     let line_count = content.lines().count();
 
@@ -75,6 +81,110 @@ async fn read_file_content(file_path: &PathBuf) -> Result<String> {
         line_count,
         content
     );
+
+    Ok(formatted_content)
+}
+
+/// Read directory metadata and return formatted information for AI context
+async fn read_directory_metadata(dir_path: &PathBuf) -> Result<String> {
+    use tokio::fs;
+
+    let mut entries = fs::read_dir(dir_path).await?;
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+    let mut total_size = 0u64;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let metadata = entry.metadata().await?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files/directories
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            // For directories, count subdirectories and files
+            let mut subdir_count = 0;
+            let mut subfile_count = 0;
+            if let Ok(mut subentries) = fs::read_dir(&path).await {
+                while let Ok(Some(subentry)) = subentries.next_entry().await {
+                    let subname = subentry.file_name().to_string_lossy().to_string();
+                    if !subname.starts_with('.') {
+                        if let Ok(submeta) = subentry.metadata().await {
+                            if submeta.is_dir() {
+                                subdir_count += 1;
+                            } else {
+                                subfile_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            directories.push((file_name, subdir_count, subfile_count));
+        } else {
+            let size = metadata.len();
+            total_size += size;
+
+            // Format file size in human readable format
+            let size_str = if size < 1024 {
+                format!("{} B", size)
+            } else if size < 1024 * 1024 {
+                format!("{:.1} KB", size as f64 / 1024.0)
+            } else if size < 1024 * 1024 * 1024 {
+                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+            } else {
+                format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+            };
+
+            files.push((file_name, size_str));
+        }
+    }
+
+    // Format directory information for AI context
+    let mut formatted_content = format!("Directory: {}\n", dir_path.display());
+    formatted_content.push_str(&format!(
+        "Total items: {} files, {} directories\n",
+        files.len(),
+        directories.len()
+    ));
+
+    if !files.is_empty() {
+        let total_size_str = if total_size < 1024 {
+            format!("{} B", total_size)
+        } else if total_size < 1024 * 1024 {
+            format!("{:.1} KB", total_size as f64 / 1024.0)
+        } else if total_size < 1024 * 1024 * 1024 {
+            format!("{:.1} MB", total_size as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.1} GB", total_size as f64 / (1024.0 * 1024.0 * 1024.0))
+        };
+        formatted_content.push_str(&format!("Total size: {}\n\n", total_size_str));
+    } else {
+        formatted_content.push_str("\n");
+    }
+
+    // List directories first
+    if !directories.is_empty() {
+        formatted_content.push_str("Directories:\n");
+        for (name, subdir_count, subfile_count) in directories {
+            formatted_content.push_str(&format!(
+                "  📁 {} ({} dirs, {} files)\n",
+                name, subdir_count, subfile_count
+            ));
+        }
+        formatted_content.push_str("\n");
+    }
+
+    // List files
+    if !files.is_empty() {
+        formatted_content.push_str("Files:\n");
+        for (name, size) in files {
+            formatted_content.push_str(&format!("  📄 {} ({})\n", name, size));
+        }
+    }
 
     Ok(formatted_content)
 }
@@ -106,10 +216,28 @@ async fn process_input_with_file_references(
 
         match read_file_content(&file_ref.path).await {
             Ok(content) => {
-                let line_count = content.lines().count();
+                // Determine if this is a directory or file based on content format
+                let is_directory = content.starts_with("Directory:");
 
-                // Collect file read message instead of sending immediately
-                file_read_messages.push(format!("⎿ Read {} ({} lines)", file_name, line_count));
+                if is_directory {
+                    // For directories, extract item count from the content
+                    let item_info = if let Some(line) = content.lines().nth(1) {
+                        // Extract the "Total items: X files, Y directories" line
+                        if line.starts_with("Total items:") {
+                            line.replace("Total items:", "").trim().to_string()
+                        } else {
+                            "directory".to_string()
+                        }
+                    } else {
+                        "directory".to_string()
+                    };
+
+                    file_read_messages.push(format!("⎿ Listed {} ({})", file_name, item_info));
+                } else {
+                    // For files, count lines as before
+                    let line_count = content.lines().count();
+                    file_read_messages.push(format!("⎿ Read {} ({} lines)", file_name, line_count));
+                }
 
                 file_contents.push(content);
             }
