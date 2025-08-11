@@ -1,12 +1,12 @@
 //! CLI output handler implementation
 
-use trae_agent_core::output::{ AgentOutput, AgentEvent, ToolExecutionStatus, MessageLevel };
-use super::formatters::{ ToolFormatter, DiffFormatter };
+use super::formatters::{DiffFormatter, ToolFormatter};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{ debug, info, warn, error };
+use tracing::{debug, error, info, warn};
+use trae_agent_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
 
 /// Tools that should not display status indicators
 static SILENT_TOOLS: &[&str] = &["sequentialthinking"];
@@ -59,7 +59,7 @@ impl CliOutputHandler {
     /// Handle real-time tool execution updates
     async fn handle_tool_update(
         &self,
-        tool_info: &trae_agent_core::output::ToolExecutionInfo
+        tool_info: &trae_agent_core::output::ToolExecutionInfo,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.realtime_updates {
             return Ok(());
@@ -81,15 +81,15 @@ impl CliOutputHandler {
                     println!("{}", self.tool_formatter.format_tool_status(tool_info));
 
                     // Show result content if available
-                    if let Some(result_display) = self.tool_formatter.format_tool_result(tool_info) {
+                    if let Some(result_display) = self.tool_formatter.format_tool_result(tool_info)
+                    {
                         println!("{}", result_display);
                     }
 
                     // Show diff for edit tools
                     if tool_info.tool_name == "str_replace_based_edit_tool" {
-                        if
-                            let Some(diff_display) =
-                                self.diff_formatter.format_edit_result(tool_info)
+                        if let Some(diff_display) =
+                            self.diff_formatter.format_edit_result(tool_info)
                         {
                             println!("{}", diff_display);
                         }
@@ -99,7 +99,8 @@ impl CliOutputHandler {
                 } else {
                     // Tool wasn't tracked, just show the final status
                     println!("{}", self.tool_formatter.format_tool_status(tool_info));
-                    if let Some(result_display) = self.tool_formatter.format_tool_result(tool_info) {
+                    if let Some(result_display) = self.tool_formatter.format_tool_result(tool_info)
+                    {
                         println!("{}", result_display);
                     }
                 }
@@ -114,7 +115,7 @@ impl CliOutputHandler {
 impl AgentOutput for CliOutputHandler {
     async fn emit_event(
         &self,
-        event: AgentEvent
+        event: AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match event {
             AgentEvent::ExecutionStarted { context } => {
@@ -126,7 +127,11 @@ impl AgentOutput for CliOutputHandler {
                 // The task execution will be shown through tool outputs
             }
 
-            AgentEvent::ExecutionCompleted { context, success, summary } => {
+            AgentEvent::ExecutionCompleted {
+                context,
+                success,
+                summary,
+            } => {
                 if success {
                     debug!("✅ Task Completed!");
                     debug!("Summary: {}", summary);
@@ -212,7 +217,10 @@ impl AgentOutput for CliOutputHandler {
                 }
             }
 
-            AgentEvent::AgentThinking { step_number: _, thinking } => {
+            AgentEvent::AgentThinking {
+                step_number: _,
+                thinking,
+            } => {
                 // In normal mode, show thinking in gray color without prefix
                 println!("\x1b[90m{}\x1b[0m", thinking);
             }
@@ -222,7 +230,19 @@ impl AgentOutput for CliOutputHandler {
                 // This is mainly for interactive mode
             }
 
-            AgentEvent::Message { level, content, metadata: _ } => {
+            AgentEvent::StatusUpdate {
+                status: _,
+                metadata: _,
+            } => {
+                // Status updates are handled by the UI layer, CLI doesn't need to show them
+                // This is mainly for interactive mode
+            }
+
+            AgentEvent::Message {
+                level,
+                content,
+                metadata: _,
+            } => {
                 match level {
                     MessageLevel::Debug => {
                         debug!("🐛 Debug: {}", content);
@@ -253,9 +273,6 @@ impl AgentOutput for CliOutputHandler {
 
     async fn flush(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use std::io::Write;
-        std::io
-            ::stdout()
-            .flush()
-            .map_err(|e| e.into())
+        std::io::stdout().flush().map_err(|e| e.into())
     }
 }

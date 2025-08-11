@@ -13,9 +13,10 @@ use tracing::info;
 mod commands;
 mod interactive;
 mod output;
+mod tools;
 mod ui;
 
-use commands::{run_command, interactive_command, tools_command, test_command};
+use commands::{interactive_command, run_command, test_command, tools_command};
 
 /// Trae Agent - LLM-based agent for software engineering tasks
 #[derive(Parser)]
@@ -150,15 +151,9 @@ async fn main() -> Result<()> {
         Some(Commands::Interactive {
             trajectory_file,
             debug_output,
-        }) => {
-            interactive_command(cli.config_dir, trajectory_file, debug_output).await
-        }
-        Some(Commands::Tools) => {
-            tools_command().await
-        }
-        Some(Commands::Test) => {
-            test_command().await
-        }
+        }) => interactive_command(cli.config_dir, trajectory_file, debug_output).await,
+        Some(Commands::Tools) => tools_command().await,
+        Some(Commands::Test) => test_command().await,
         None => {
             // Default to interactive mode
             interactive_command(cli.config_dir, None, cli.debug_output).await

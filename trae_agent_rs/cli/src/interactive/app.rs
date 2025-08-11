@@ -3,10 +3,62 @@
 use crate::output::interactive_handler::{InteractiveMessage, InteractiveOutputHandler};
 use anyhow::Result;
 use iocraft::prelude::*;
+use rand::seq::SliceRandom;
 use std::path::PathBuf;
 use tokio::sync::{broadcast, mpsc};
 use trae_agent_core::Config;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Random status words for initial display
+const RANDOM_STATUS_WORDS: &[&str] = &[
+    "Vicing",
+    "Working",
+    "Mulling",
+    "Unravelling",
+    "Finagling",
+    "Doing",
+    "Brewing",
+    "Pondering",
+    "Crafting",
+    "Weaving",
+    "Conjuring",
+    "Orchestrating",
+    "Assembling",
+    "Synthesizing",
+    "Formulating",
+    "Devising",
+    "Constructing",
+    "Architecting",
+    "Engineering",
+    "Designing",
+    "Plotting",
+    "Scheming",
+    "Strategizing",
+    "Calculating",
+    "Computing",
+    "Processing",
+    "Analyzing",
+    "Examining",
+    "Investigating",
+    "Exploring",
+    "Discovering",
+    "Uncovering",
+    "Deciphering",
+    "Solving",
+    "Resolving",
+    "Tackling",
+    "Addressing",
+    "Handling",
+    "Managing",
+    "Coordinating",
+];
+
+/// Get a random status word
+fn get_random_status_word() -> String {
+    let mut rng = rand::thread_rng();
+    let word = RANDOM_STATUS_WORDS.choose(&mut rng).unwrap_or(&"Working");
+    format!("{}…", word)
+}
 
 /// Represents different types of content blocks for output formatting
 #[derive(Debug, Clone, PartialEq)]
@@ -502,9 +554,18 @@ fn spawn_ui_agent_task(
     project_path: PathBuf,
     ui_sender: broadcast::Sender<AppMessage>,
 ) {
-    // Notify start
+    // Start with a random status word
     let _ = ui_sender.send(AppMessage::AgentTaskStarted {
-        operation: "Considering".to_string(),
+        operation: get_random_status_word(),
+    });
+
+    // Change status word once after 1 second
+    let ui_sender_timer = ui_sender.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _ = ui_sender_timer.send(AppMessage::AgentTaskStarted {
+            operation: get_random_status_word(),
+        });
     });
 
     // Execute agent task
@@ -1042,7 +1103,7 @@ impl trae_agent_core::output::AgentOutput for TokenTrackingOutputHandler {
         &self,
         event: trae_agent_core::output::AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Check for token updates in various events
+        // Check for token updates and status updates in various events
         match &event {
             trae_agent_core::output::AgentEvent::ExecutionCompleted { context, .. } => {
                 if context.token_usage.total_tokens > 0 {
@@ -1055,6 +1116,12 @@ impl trae_agent_core::output::AgentOutput for TokenTrackingOutputHandler {
                 // Send immediate token update for smooth animation
                 let _ = self.ui_sender.send(AppMessage::TokenUpdate {
                     tokens: token_usage.total_tokens,
+                });
+            }
+            trae_agent_core::output::AgentEvent::StatusUpdate { status, .. } => {
+                // Send status update to UI
+                let _ = self.ui_sender.send(AppMessage::AgentTaskStarted {
+                    operation: status.clone(),
                 });
             }
             _ => {}
@@ -1073,9 +1140,16 @@ async fn execute_agent_task(
     ui_sender: broadcast::Sender<AppMessage>,
 ) -> Result<()> {
     use crate::output::interactive_handler::InteractiveOutputConfig;
+    use crate::tools::StatusReportToolFactory;
+    use trae_agent_core::tools::ToolRegistry;
 
     // Get agent configuration
-    let agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
+    let mut agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
+
+    // Add status_report tool to the tool list for interactive mode
+    if !agent_config.tools.contains(&"status_report".to_string()) {
+        agent_config.tools.push("status_report".to_string());
+    }
 
     // Create channel for InteractiveMessage and forward to AppMessage
     let (interactive_sender, mut interactive_receiver) = mpsc::unbounded_channel();
@@ -1096,14 +1170,24 @@ async fn execute_agent_task(
     let token_tracking_output = Box::new(TokenTrackingOutputHandler::new(
         interactive_config,
         interactive_sender,
-        ui_sender,
+        ui_sender.clone(),
     ));
 
+    // Create custom tool registry with status_report tool for interactive mode
+    let mut tool_registry = ToolRegistry::default();
+    tool_registry.register_factory(Box::new(StatusReportToolFactory::with_ui_sender(
+        ui_sender.clone(),
+    )));
+
+    // Create modified config with custom tool registry
+    let modified_config = config.clone();
+
     // Create and execute agent task
-    let mut agent = trae_agent_core::agent::TraeAgent::new_with_output(
+    let mut agent = trae_agent_core::agent::TraeAgent::new_with_output_and_registry(
         agent_config,
-        config,
+        modified_config,
         token_tracking_output,
+        tool_registry,
     )
     .await?;
     agent

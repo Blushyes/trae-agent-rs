@@ -1,17 +1,17 @@
 //! Interactive output handler implementation for UI integration
 //! Delegates all output behavior to CliOutputHandler while maintaining UI integration
 
-use trae_agent_core::output::{ AgentOutput, AgentEvent, ToolExecutionStatus, MessageLevel };
-use super::cli_handler::{ CliOutputHandler, CliOutputConfig };
-use super::formatters::{ ToolFormatter, DiffFormatter };
+use super::cli_handler::{CliOutputConfig, CliOutputHandler};
+use super::formatters::{DiffFormatter, ToolFormatter};
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use trae_agent_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
 
 /// Tools that should not display status indicators
-static SILENT_TOOLS: &[&str] = &["sequentialthinking"];
+static SILENT_TOOLS: &[&str] = &["sequentialthinking", "status_report"];
 
 /// Check if a tool should be silent (no status display)
 fn is_silent_tool(tool_name: &str) -> bool {
@@ -33,10 +33,7 @@ pub enum InteractiveMessage {
     /// System message
     SystemMessage(String),
     /// Task completion
-    TaskCompleted {
-        success: bool,
-        summary: String,
-    },
+    TaskCompleted { success: bool, summary: String },
     /// Execution statistics
     ExecutionStats {
         steps: usize,
@@ -82,7 +79,7 @@ impl InteractiveOutputHandler {
     /// Create a new interactive output handler
     pub fn new(
         config: InteractiveOutputConfig,
-        ui_sender: mpsc::UnboundedSender<InteractiveMessage>
+        ui_sender: mpsc::UnboundedSender<InteractiveMessage>,
     ) -> Self {
         // Create CLI output handler with the same realtime_updates setting
         let cli_config = CliOutputConfig {
@@ -109,7 +106,7 @@ impl InteractiveOutputHandler {
 impl AgentOutput for InteractiveOutputHandler {
     async fn emit_event(
         &self,
-        event: AgentEvent
+        event: AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // In interactive mode, only use UI messages to avoid duplicate output
         // Only delegate to CLI handler if we don't have a UI sender
@@ -120,15 +117,17 @@ impl AgentOutput for InteractiveOutputHandler {
                     // The task execution will be shown through tool outputs
                 }
 
-                AgentEvent::ExecutionCompleted { context, success: _, summary: _ } => {
+                AgentEvent::ExecutionCompleted {
+                    context,
+                    success: _,
+                    summary: _,
+                } => {
                     // Use same format as CLI mode
                     let stats_msg = format!("📈 Executed {} steps", context.current_step);
                     let _ = ui_sender.send(InteractiveMessage::SystemMessage(stats_msg));
 
-                    let duration_msg = format!(
-                        "⏱️  Duration: {:.2}s",
-                        context.execution_time.as_secs_f64()
-                    );
+                    let duration_msg =
+                        format!("⏱️  Duration: {:.2}s", context.execution_time.as_secs_f64());
                     let _ = ui_sender.send(InteractiveMessage::SystemMessage(duration_msg));
 
                     // Show token usage if available
@@ -176,20 +175,15 @@ impl AgentOutput for InteractiveOutputHandler {
                     });
 
                     // Show result content if available
-                    if
-                        let Some(result_display) = self.tool_formatter.format_tool_result(
-                            &tool_info
-                        )
+                    if let Some(result_display) = self.tool_formatter.format_tool_result(&tool_info)
                     {
                         let _ = ui_sender.send(InteractiveMessage::ToolResult(result_display));
                     }
 
                     // Show diff for edit tools
                     if tool_info.tool_name == "str_replace_based_edit_tool" {
-                        if
-                            let Some(diff_display) = self.diff_formatter.format_edit_result(
-                                &tool_info
-                            )
+                        if let Some(diff_display) =
+                            self.diff_formatter.format_edit_result(&tool_info)
                         {
                             let _ = ui_sender.send(InteractiveMessage::ToolResult(diff_display));
                         }

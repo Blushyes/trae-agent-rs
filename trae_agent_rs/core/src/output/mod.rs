@@ -3,10 +3,10 @@
 //! This module provides an abstract interface for outputting agent execution information,
 //! allowing different implementations for CLI, API, logging, etc.
 
-use crate::tools::{ ToolCall, ToolResult };
-use serde::{ Deserialize, Serialize };
-use std::collections::HashMap;
+use crate::tools::{ToolCall, ToolResult};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Core only provides abstractions - implementations are in calling modules
 
@@ -17,7 +17,7 @@ pub struct NullOutput;
 impl AgentOutput for NullOutput {
     async fn emit_event(
         &self,
-        _event: AgentEvent
+        _event: AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
@@ -107,9 +107,7 @@ pub struct AgentExecutionContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent {
     /// Agent execution started
-    ExecutionStarted {
-        context: AgentExecutionContext,
-    },
+    ExecutionStarted { context: AgentExecutionContext },
     /// Agent execution completed
     ExecutionCompleted {
         context: AgentExecutionContext,
@@ -117,33 +115,26 @@ pub enum AgentEvent {
         summary: String,
     },
     /// New step started
-    StepStarted {
-        step_info: AgentStepInfo,
-    },
+    StepStarted { step_info: AgentStepInfo },
     /// Step completed
-    StepCompleted {
-        step_info: AgentStepInfo,
-    },
+    StepCompleted { step_info: AgentStepInfo },
     /// Tool execution started
-    ToolExecutionStarted {
-        tool_info: ToolExecutionInfo,
-    },
+    ToolExecutionStarted { tool_info: ToolExecutionInfo },
     /// Tool execution status updated
-    ToolExecutionUpdated {
-        tool_info: ToolExecutionInfo,
-    },
+    ToolExecutionUpdated { tool_info: ToolExecutionInfo },
     /// Tool execution completed
-    ToolExecutionCompleted {
-        tool_info: ToolExecutionInfo,
-    },
+    ToolExecutionCompleted { tool_info: ToolExecutionInfo },
     /// Agent thinking/reasoning
     AgentThinking {
         step_number: usize,
         thinking: String,
     },
     /// Token usage updated (emitted after each LLM call)
-    TokenUsageUpdated {
-        token_usage: TokenUsage,
+    TokenUsageUpdated { token_usage: TokenUsage },
+    /// Agent status update (for interactive mode status reporting)
+    StatusUpdate {
+        status: String,
+        metadata: HashMap<String, serde_json::Value>,
     },
     /// General message or log
     Message {
@@ -169,20 +160,21 @@ pub trait AgentOutput: Send + Sync {
     /// Emit an agent event
     async fn emit_event(
         &self,
-        event: AgentEvent
+        event: AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Emit a message with specified level
     async fn emit_message(
         &self,
         level: MessageLevel,
-        content: &str
+        content: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.emit_event(AgentEvent::Message {
             level,
             content: content.to_string(),
             metadata: HashMap::new(),
-        }).await
+        })
+        .await
     }
 
     /// Emit debug message
@@ -193,9 +185,10 @@ pub trait AgentOutput: Send + Sync {
     /// Emit token usage update
     async fn emit_token_update(
         &self,
-        token_usage: TokenUsage
+        token_usage: TokenUsage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.emit_event(AgentEvent::TokenUsageUpdated { token_usage }).await
+        self.emit_event(AgentEvent::TokenUsageUpdated { token_usage })
+            .await
     }
 
     /// Emit info message
@@ -218,6 +211,18 @@ pub trait AgentOutput: Send + Sync {
         self.emit_message(MessageLevel::Normal, content).await
     }
 
+    /// Emit status update (for interactive mode status reporting)
+    async fn emit_status_update(
+        &self,
+        status: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.emit_event(AgentEvent::StatusUpdate {
+            status: status.to_string(),
+            metadata: HashMap::new(),
+        })
+        .await
+    }
+
     /// Check if this output handler supports real-time updates
     fn supports_realtime_updates(&self) -> bool {
         false
@@ -234,7 +239,7 @@ pub trait ToolExecutionInfoBuilder {
     fn create_tool_execution_info(
         tool_call: &ToolCall,
         status: ToolExecutionStatus,
-        result: Option<&ToolResult>
+        result: Option<&ToolResult>,
     ) -> ToolExecutionInfo;
 }
 
@@ -242,12 +247,10 @@ impl ToolExecutionInfoBuilder for ToolExecutionInfo {
     fn create_tool_execution_info(
         tool_call: &ToolCall,
         status: ToolExecutionStatus,
-        result: Option<&ToolResult>
+        result: Option<&ToolResult>,
     ) -> ToolExecutionInfo {
         let parameters = if let serde_json::Value::Object(map) = &tool_call.parameters {
-            map.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
+            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         } else {
             let mut map = HashMap::new();
             map.insert("raw_parameters".to_string(), tool_call.parameters.clone());
