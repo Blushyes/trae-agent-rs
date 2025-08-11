@@ -50,7 +50,7 @@ impl Tool for StatusReportTool {
             "properties": {
                 "status": {
                     "type": "string",
-                    "description": "Current status message to display to the user. Use clear, action-oriented descriptions like 'Analyzing code', 'Searching files', 'Reading documentation', 'Generating response', 'Writing code', 'Running tests', etc. Update this every time you start a new type of activity."
+                    "description": "Current status message to display to the user. Use clear, action-oriented descriptions like 'Analyzing code', 'Searching files', 'Reading documentation', 'Generating response', 'Writing code', 'Running tests', etc. Update this every time you start a new type of activity. Limit the number of characters to 20"
                 },
                 "details": {
                     "type": "string",
