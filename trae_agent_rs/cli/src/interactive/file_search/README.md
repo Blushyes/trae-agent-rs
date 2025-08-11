@@ -12,13 +12,28 @@ This is a high-performance, extensible file search system designed for Trae Agen
 - **Word Boundary Match**: Matches at word boundaries, e.g., searching "mr" matches "main.rs" (m=main, r=rs)
 - **Fuzzy Match**: Characters can have gaps, e.g., searching "mn" matches "main.rs"
 
-### 2. High-Performance Features
+### 2. Absolute Path Support (🆕 Latest Feature)
+
+- **Smart Path Detection**: Automatically detects absolute path queries starting with `/`
+- **Path Conversion**: Converts absolute paths to relative paths for project-scoped searching
+- **Triple Matching**: Searches against file name, relative path, and absolute path
+- **Fallback Handling**: Gracefully handles non-existent absolute paths
+- **Cross-Platform**: Works with different path formats and project structures
+
+### 3. Input Parsing System (🆕 Refactored)
+
+- **Modular Design**: Input parsing logic separated into dedicated `input_parser.rs` module
+- **Simple Trigger Logic**: Split by spaces, check if last segment starts with `@`
+- **Cursor Awareness**: Handles cursor position for real-time search updates
+- **Backspace Support**: Re-triggers search when content after `@path` is deleted
+
+### 4. High-Performance Features
 
 - **File Caching**: Smart caching of file lists to avoid repeated scanning
 - **Real-time Search**: Results update in real-time during user input, response time <100ms
 - **Memory Optimization**: Only cache necessary file information
 
-### 3. Git Integration
+### 5. Git Integration
 
 - **Auto Ignore**: Follows .gitignore rules
 - **Smart Filtering**: Automatically excludes common build artifacts and temporary files
@@ -30,13 +45,16 @@ This is a high-performance, extensible file search system designed for Trae Agen
 
 ```
 file_search/
-├── mod.rs              # Main interface
-├── engine.rs           # Core search engine
-├── fuzzy.rs           # Fuzzy matching algorithm
-├── cache.rs           # File caching system
-├── git_integration.rs # Git integration
-├── config.rs          # Configuration management
-└── tests.rs           # Test suite
+├── README.md           # This documentation file
+├── mod.rs              # Main interface and exports
+├── engine.rs           # Core search engine with absolute path support
+├── input_parser.rs     # Input parsing logic for @ syntax
+├── fuzzy.rs           # Intelligent fuzzy matching algorithm
+├── cache.rs           # High-performance file caching system
+├── config.rs          # Search configuration management
+├── git_integration.rs # Git integration and .gitignore support
+├── provider.rs        # Search provider abstraction
+└── tests.rs           # Comprehensive test suite
 ```
 
 ### Core Components
@@ -45,9 +63,27 @@ file_search/
 
 Main search interface, providing:
 
-- `search(query: &str)` - Search files
-- `get_all_files()` - Get all files
-- `refresh()` - Refresh cache
+- `search(query: &str)` - Search files with intelligent matching
+- `get_all_files()` - Get all files in the project
+- `refresh()` - Refresh file cache
+
+#### FileSearchEngine
+
+Core search engine with advanced features:
+
+- **Absolute Path Support**: Automatically converts absolute paths to relative paths for searching
+- **Triple Matching Strategy**: Matches against file name, relative path, and absolute path
+- **Smart Path Conversion**: Handles both existing and non-existing absolute paths
+- **Performance Optimized**: Efficient search with configurable result limits
+
+#### InputParser
+
+Handles `@` syntax parsing and query extraction:
+
+- `should_show_file_search(input, cursor_pos)` - Determines when to show search results
+- `extract_search_query(input, cursor_pos)` - Extracts search query from user input
+- **Simple Logic**: Split by spaces, check if last segment starts with `@`
+- **Cursor Aware**: Handles cursor position for real-time updates
 
 #### FuzzyMatcher
 
@@ -73,6 +109,38 @@ Git integration features:
 - Wildcard pattern matching
 - Default ignore rules
 
+## Recent Architecture Improvements (🆕)
+
+### Modular Refactoring
+
+The file search system has been refactored for better modularity and maintainability:
+
+**Before**: Input parsing logic scattered in `app.rs`
+**After**: Dedicated `input_parser.rs` module with clear responsibilities
+
+### Enhanced Search Capabilities
+
+**Absolute Path Support**:
+
+- Detects absolute path queries (starting with `/`)
+- Converts absolute paths to relative paths for project-scoped searching
+- Handles both existing and non-existing paths gracefully
+- Maintains compatibility with existing relative path searches
+
+**Improved Input Parsing**:
+
+- Simplified trigger logic based on space-separated segments
+- Better cursor position handling
+- Enhanced backspace scenario support
+- Comprehensive test coverage for edge cases
+
+### Code Organization Benefits
+
+1. **Separation of Concerns**: Input parsing separated from application logic
+2. **Testability**: Input parsing logic can be tested independently
+3. **Maintainability**: Related functionality grouped in logical modules
+4. **Extensibility**: Easy to add new input parsing features
+
 ## User Experience
 
 ### Keyboard Shortcuts
@@ -83,11 +151,48 @@ Git integration features:
 
 ### Search Experience
 
-1. Enter `@` to show all files
-2. Type search terms after `@` for real-time filtering
-3. Results automatically sorted by match quality
-4. Support for mixed directory and file display
-5. **Insert absolute path when accepting files**, ensuring accurate path references
+1. **Trigger Search**: Enter `@` to show all files
+2. **Real-time Filtering**: Type search terms after `@` for instant results
+3. **Smart Sorting**: Results automatically sorted by match quality and type
+4. **Mixed Content Support**: Use file references within larger text input
+5. **Absolute Path Support**: Use absolute paths like `@/Users/pan/projects/file.txt`
+6. **Path Conversion**: Absolute paths automatically converted to relative paths
+7. **Backspace Handling**: Deleting content after `@path` re-triggers search
+
+### Advanced Usage Patterns
+
+**Basic File Search:**
+
+```
+@main                    → Search for files containing "main"
+@src/lib                 → Search in src directory for "lib"
+@.rs                     → Search for Rust files
+```
+
+**Absolute Path Search:**
+
+```
+@/Users/pan/projects/trae-agent-rs/trae_agent_rs/cli/src/
+→ Automatically converts to: cli/src/
+→ Shows files in cli/src/ directory
+```
+
+**Mixed Content:**
+
+```
+Please check @config.rs and @src/main.rs for the implementation
+→ Both file references will be processed and made clickable
+```
+
+**Interactive Scenarios:**
+
+```
+User types: @/absolute/path/file.txt content
+→ Search hidden (has content after path)
+
+User deletes " content":
+→ Search re-appears for @/absolute/path/file.txt
+```
 
 ## Performance Features
 
@@ -148,7 +253,9 @@ Includes comprehensive test suite:
 - Integration Tests: Complete search flow testing
 - Performance Tests: Large file collection performance verification
 
-## Usage Example
+## Usage Examples
+
+### Basic Search System Usage
 
 ```rust
 // Create search system
@@ -165,4 +272,71 @@ for result in results {
 }
 ```
 
-This search system provides Trae Agent with powerful and flexible file discovery capabilities, greatly improving user productivity.
+### Input Parsing Usage
+
+```rust
+use crate::interactive::file_search::{should_show_file_search, extract_search_query};
+
+// Check if input should trigger search
+let input = "@src/main.rs";
+let cursor_pos = input.len();
+
+if should_show_file_search(input, cursor_pos) {
+    if let Some(query) = extract_search_query(input, cursor_pos) {
+        println!("Search query: {}", query); // Output: "src/main.rs"
+    }
+}
+
+// Handle absolute paths
+let abs_input = "@/Users/pan/projects/trae-agent-rs/cli/src/main.rs";
+if should_show_file_search(abs_input, abs_input.len()) {
+    if let Some(query) = extract_search_query(abs_input, abs_input.len()) {
+        // query will be the absolute path, engine will convert to relative
+        println!("Absolute query: {}", query);
+    }
+}
+```
+
+### Integration with UI Components
+
+```rust
+// In input_section.rs
+use crate::interactive::file_search::{should_show_file_search, extract_search_query};
+
+// Check if we should show file search
+let should_show = should_show_file_search(&input_value, cursor_position);
+
+if should_show {
+    if let Some(query) = extract_search_query(&input_value, cursor_position) {
+        // Trigger search with the extracted query
+        let results = search_system.search(&query);
+        // Display results in UI...
+    }
+}
+```
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all file search tests
+cargo test file_search
+
+# Run specific test modules
+cargo test input_parser::tests
+cargo test engine::tests
+cargo test fuzzy::tests
+
+# Run with output
+cargo test file_search -- --nocapture
+```
+
+### Test Coverage
+
+- **Input Parser Tests**: 4 test functions covering all input scenarios
+- **Engine Tests**: Search functionality and absolute path conversion
+- **Fuzzy Matcher Tests**: All match types and scoring
+- **Integration Tests**: End-to-end search workflows
+
+This search system provides Trae Agent with powerful and flexible file discovery capabilities, greatly improving user productivity through intelligent search and seamless absolute path support.

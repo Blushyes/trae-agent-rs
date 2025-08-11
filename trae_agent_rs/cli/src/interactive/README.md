@@ -15,6 +15,17 @@ interactive/
 ├── terminal_output.rs     # Terminal output abstraction and formatting
 ├── text_utils.rs          # Text processing utilities (Unicode-aware)
 ├── state.rs              # Interactive state management
+├── file_search/          # High-performance file search system
+│   ├── README.md         # File search system documentation
+│   ├── mod.rs            # Main search interface
+│   ├── engine.rs         # Core search engine with absolute path support
+│   ├── input_parser.rs   # Input parsing logic for @ syntax
+│   ├── fuzzy.rs          # Intelligent fuzzy matching algorithm
+│   ├── cache.rs          # High-performance file caching system
+│   ├── config.rs         # Search configuration management
+│   ├── git_integration.rs # Git integration and .gitignore support
+│   ├── provider.rs       # Search provider abstraction
+│   └── tests.rs          # Comprehensive test suite
 └── components/           # UI component modules
     ├── mod.rs            # Component module declarations
     ├── logo.rs           # TRAE ASCII art logo component
@@ -29,44 +40,96 @@ interactive/
 The main entry point for the interactive mode, containing the `TraeApp` component and application context.
 
 **Key Components:**
+
 - `TraeApp`: Main iocraft component that orchestrates the UI
 - `AppContext`: Immutable application configuration and state
 - `run_interactive_mode()`: Entry point function for interactive mode
 
 **Responsibilities:**
+
 - Manages the overall UI layout and component hierarchy
 - Handles message broadcasting between components
 - Coordinates header output and message display
 - Integrates with the terminal output system
+- Processes file references from user input using `@` syntax
 
 ### `animation.rs` - Animation System
 
 Provides animation utilities for smooth UI transitions and visual feedback.
 
 **Key Types:**
+
 - `Easing`: Enum for different easing functions (Linear, EaseOutCubic, EaseInOutCubic)
 - `UiAnimationConfig`: Configuration for UI animations with environment variable support
 - `TokenAnimation`: Animation state for token counting with smooth transitions
 - `SpinnerAnimation`: Rotating spinner for status indication
 
 **Key Functions:**
+
 - `apply_easing(easing, t)`: Applies easing function to normalized time value
 - `UiAnimationConfig::from_env()`: Creates config with environment variable overrides
 
 **Environment Variables:**
+
 - `TRAE_UI_EASING`: Animation easing type
 - `TRAE_UI_FRAME_MS`: Frame interval in milliseconds
 - `TRAE_UI_DURATION_MS`: Animation duration in milliseconds
+
+### `file_search/` - High-Performance File Search System
+
+A comprehensive file search system that enables users to quickly find and reference files using the `@` syntax.
+
+**Key Components:**
+
+- `FileSearchSystem`: Main search interface with caching and Git integration
+- `FileSearchEngine`: Core search engine with absolute path support
+- `FuzzyMatcher`: Intelligent fuzzy matching with multiple match types
+- `FileCache`: High-performance caching system with smart invalidation
+- `InputParser`: Handles `@` syntax parsing and query extraction
+
+**Search Features:**
+
+- **Intelligent Fuzzy Search**: Exact, continuous, prefix, word boundary, and fuzzy matching
+- **Absolute Path Support**: Automatically converts absolute paths to relative paths for searching
+- **Real-time Search**: Sub-100ms response time with live result updates
+- **Git Integration**: Respects .gitignore rules and excludes build artifacts
+- **Smart Caching**: 5-second cache validity with automatic invalidation
+
+**User Interface:**
+
+- **Trigger**: Type `@` to show all files, `@query` to search
+- **Navigation**: Arrow keys or Ctrl+P/N to navigate results
+- **Selection**: Tab or Enter to insert file path
+- **Cancellation**: Esc to close search results
+
+**Supported Syntax:**
+
+```
+@                           → Show all files
+@main                       → Search for files containing "main"
+@src/                       → Search for files in src directory
+@/absolute/path/to/file     → Search using absolute path (auto-converted)
+hello @file.txt             → File reference in mixed content
+```
+
+**Architecture Benefits:**
+
+- Modular design with clear separation of concerns
+- Extensible provider pattern for different search backends
+- Comprehensive test coverage with unit and integration tests
+- Performance optimized for large codebases
 
 ### `message_handler.rs` - Message Processing
 
 Handles message types, conversion, and processing logic for the interactive UI.
 
 **Key Types:**
+
 - `AppMessage`: Enum for different message types in the interactive app
 - `ContentBlock`: Enum for different content block types (UserInput, AgentText, ToolStatus, ToolResult)
 
 **Key Functions:**
+
 - `get_random_status_word()`: Returns a random status word for initial display
 - `generate_message_id()`: Creates unique message identifiers
 - `identify_content_block(content, role)`: Determines content block type
@@ -74,6 +137,7 @@ Handles message types, conversion, and processing logic for the interactive UI.
 - `app_message_to_ui_message(app_message)`: Converts AppMessage to UI message tuple
 
 **Message Types:**
+
 - `SystemMessage`: System notifications
 - `UserMessage`: User input messages
 - `InteractiveUpdate`: Real-time updates from agent execution
@@ -86,10 +150,12 @@ Handles message types, conversion, and processing logic for the interactive UI.
 Manages agent task execution with UI integration and token tracking.
 
 **Key Components:**
+
 - `TokenTrackingOutputHandler`: Custom output handler that forwards events and tracks tokens
 - `execute_agent_task()`: Executes agent tasks asynchronously with UI updates
 
 **Features:**
+
 - Real-time token usage tracking and animation
 - Status updates during task execution
 - Integration with interactive output handler
@@ -100,15 +166,18 @@ Manages agent task execution with UI integration and token tracking.
 Provides terminal output utilities and formatting functions that work with the AgentOutput system.
 
 **Key Traits:**
+
 - `OutputHandle`: Abstraction over different output handles (StdoutHandle, StderrHandle)
 
 **Key Functions:**
+
 - `output_content_block()`: Formats and outputs content blocks with appropriate spacing
 - `overwrite_previous_lines()`: Overwrites previous terminal lines using ANSI escape sequences
 - `update_status_line_at_position()`: Updates status line at specific terminal position
 - `apply_color()` / `apply_rgb_color()`: Applies ANSI color formatting
 
 **Features:**
+
 - Unicode-aware text formatting
 - ANSI escape sequence support for terminal manipulation
 - Block-based content formatting with proper spacing
@@ -119,12 +188,14 @@ Provides terminal output utilities and formatting functions that work with the A
 Provides text processing utilities for the interactive UI with Unicode support.
 
 **Key Functions:**
+
 - `wrap_text(text, max_width)`: Unicode-aware text wrapping with word and character breaking
 - `get_terminal_width()`: Gets terminal width with fallback
 - `text_width(text)`: Calculates display width considering Unicode characters
 - `char_width(ch)`: Calculates display width of a single character
 
 **Features:**
+
 - Proper handling of CJK (Chinese, Japanese, Korean) characters
 - Word-boundary aware text wrapping
 - Character-level wrapping for very long words
@@ -137,6 +208,7 @@ Provides text processing utilities for the interactive UI with Unicode support.
 Displays the TRAE ASCII art logo with gradient colors.
 
 **Key Components:**
+
 - `TraeLogo`: iocraft component for rendering the logo
 - `TRAE_LOGO_LINES`: Static logo lines
 - `LOGO_COLORS`: RGB color gradient for logo lines
@@ -147,11 +219,13 @@ Displays the TRAE ASCII art logo with gradient colors.
 Shows real-time agent execution status, progress, and token usage.
 
 **Key Components:**
+
 - `DynamicStatusLine`: iocraft component for status display
 - `StatusLineContext`: Context containing UI sender and animation config
 - `DynamicStatusLineProps`: Component properties
 
 **Features:**
+
 - Real-time status updates during agent execution
 - Animated token counting with configurable easing
 - Spinner animation for visual feedback
@@ -163,11 +237,13 @@ Shows real-time agent execution status, progress, and token usage.
 Handles user input and displays the status bar at the bottom of the interface.
 
 **Key Components:**
+
 - `InputSection`: iocraft component for input handling
 - `InputSectionContext`: Context containing config, project path, and UI sender
 - `spawn_ui_agent_task()`: Spawns agent task execution with UI events
 
 **Features:**
+
 - Real-time keyboard input handling
 - Input validation and processing
 - Task execution triggering
