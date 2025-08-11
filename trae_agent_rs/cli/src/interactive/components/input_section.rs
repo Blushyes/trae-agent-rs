@@ -17,6 +17,56 @@ use tokio::sync::broadcast;
 use trae_agent_core::Config;
 use unicode_width::UnicodeWidthStr;
 
+/// Calculate cursor position (line, column) from text and byte position
+/// Returns (line_number, column_number) where both are 1-based
+fn calculate_cursor_position(text: &str, byte_pos: usize) -> (usize, usize) {
+    if text.is_empty() {
+        return (1, 1);
+    }
+
+    let safe_pos = byte_pos.min(text.len());
+    let text_before_cursor = &text[..safe_pos];
+
+    // Count lines (number of newlines + 1)
+    let line_number = text_before_cursor.matches('\n').count() + 1;
+
+    // Find the start of the current line
+    let current_line_start = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let current_line_text = &text_before_cursor[current_line_start..];
+
+    // Count characters in current line (not bytes)
+    let column_number = current_line_text.chars().count() + 1;
+
+    (line_number, column_number)
+}
+
+/// Calculate cursor display position for rendering
+/// Returns (display_line, display_column) where both are 0-based for UI positioning
+fn calculate_cursor_display_position(
+    text: &str,
+    byte_pos: usize,
+    _max_width: usize,
+) -> (usize, usize) {
+    if text.is_empty() {
+        return (0, 0);
+    }
+
+    let safe_pos = byte_pos.min(text.len());
+    let text_before_cursor = &text[..safe_pos];
+
+    // Count display lines (number of newlines)
+    let display_line = text_before_cursor.matches('\n').count();
+
+    // Find the start of the current line
+    let current_line_start = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let current_line_text = &text_before_cursor[current_line_start..];
+
+    // Count display characters in current line (using Unicode width)
+    let display_column = current_line_text.width();
+
+    (display_line, display_column)
+}
+
 #[derive(Clone, Props)]
 pub struct InputSectionProps {
     pub context: InputSectionContext,
@@ -49,6 +99,7 @@ pub struct EnhancedTextInputProps {
     pub has_focus: bool,
     pub on_change: Handler<'static, String>,
     pub on_submit: Handler<'static, String>,
+    pub on_cursor_position_change: Handler<'static, (usize, usize)>, // (line, column)
     pub width: u16,
     pub placeholder: String,
     pub color: Option<Color>,
@@ -63,6 +114,7 @@ impl Default for EnhancedTextInputProps {
             has_focus: false,
             on_change: Handler::default(),
             on_submit: Handler::default(),
+            on_cursor_position_change: Handler::default(),
             width: 80,
             placeholder: String::new(),
             color: None,
@@ -103,6 +155,7 @@ pub fn EnhancedTextInput(
     hooks.use_terminal_events({
         let mut on_change = props.on_change.take();
         let mut on_submit = props.on_submit.take();
+        let mut on_cursor_position_change = props.on_cursor_position_change.take();
         let mut value = props.value.clone();
         let mut cursor_pos = cursor_pos.clone();
         let mut show_file_list = show_file_list.clone();
@@ -189,6 +242,11 @@ pub fn EnhancedTextInput(
                                             pos = at_pos + replacement.len();
                                             cursor_pos.set(pos);
                                             on_change(value.clone());
+
+                                            // Update cursor position
+                                            let (line, col) =
+                                                calculate_cursor_position(&value, pos);
+                                            on_cursor_position_change((line, col));
                                         }
                                     }
                                 }
@@ -220,6 +278,10 @@ pub fn EnhancedTextInput(
                                 .map(|(i, _)| i)
                                 .unwrap_or(value.len());
                             changed = true;
+
+                            // Update cursor position
+                            let (line, col) = calculate_cursor_position(&value, pos);
+                            on_cursor_position_change((line, col));
 
                             // Check if we should show/update/hide file list after character input
                             let should_show = should_show_file_search(&value, pos);
@@ -283,6 +345,10 @@ pub fn EnhancedTextInput(
                                     value = chars.into_iter().collect();
                                     pos = char_start;
                                     changed = true;
+
+                                    // Update cursor position
+                                    let (line, col) = calculate_cursor_position(&value, pos);
+                                    on_cursor_position_change((line, col));
 
                                     // Check if we should show/update/hide file list after backspace
                                     let should_show = should_show_file_search(&value, pos);
@@ -351,6 +417,10 @@ pub fn EnhancedTextInput(
                                         chars.remove(char_pos);
                                         value = chars.into_iter().collect();
                                         changed = true;
+
+                                        // Update cursor position
+                                        let (line, col) = calculate_cursor_position(&value, pos);
+                                        on_cursor_position_change((line, col));
 
                                         // Update search or hide file list
                                         if *show_file_list.read() {
@@ -450,6 +520,10 @@ pub fn EnhancedTextInput(
                                     value = format!("{}{}\n{}", before_line, new_line, after_line);
                                     pos = current_line_start + new_line.len() + 1; // Position after newline
                                     changed = true;
+
+                                    // Update cursor position
+                                    let (line, col) = calculate_cursor_position(&value, pos);
+                                    on_cursor_position_change((line, col));
                                 }
                             } else if modifiers.contains(KeyModifiers::SHIFT) {
                                 // Shift+Enter adds newline - use safe character insertion
@@ -466,6 +540,10 @@ pub fn EnhancedTextInput(
                                     .map(|(i, _)| i)
                                     .unwrap_or(value.len());
                                 changed = true;
+
+                                // Update cursor position
+                                let (line, col) = calculate_cursor_position(&value, pos);
+                                on_cursor_position_change((line, col));
                             } else {
                                 // Regular Enter submits
                                 on_submit(value.clone());
@@ -482,6 +560,10 @@ pub fn EnhancedTextInput(
                                     .unwrap_or(0);
                                 pos = char_start;
                                 cursor_pos.set(pos);
+
+                                // Update cursor position
+                                let (line, col) = calculate_cursor_position(&value, pos);
+                                on_cursor_position_change((line, col));
                             }
                         }
                         KeyCode::Right => {
@@ -493,6 +575,10 @@ pub fn EnhancedTextInput(
                                     .unwrap_or(value.len());
                                 pos = char_end;
                                 cursor_pos.set(pos);
+
+                                // Update cursor position
+                                let (line, col) = calculate_cursor_position(&value, pos);
+                                on_cursor_position_change((line, col));
                             }
                         }
                         _ => {}
@@ -569,11 +655,12 @@ pub fn EnhancedTextInput(
                 padding_right: 1,
                 position: Position::Relative,
             ) {
-                // Content area
+                // Content area with cursor
                 View(
                     flex_direction: FlexDirection::Column,
                     width: 100pct,
                     height: 100pct,
+                    position: Position::Relative,
                 ) {
                     #(display_lines.iter().enumerate().map(|(line_idx, line)| {
                         element! {
@@ -581,6 +668,7 @@ pub fn EnhancedTextInput(
                                 key: format!("line-{}", line_idx),
                                 height: 1,
                                 width: 100pct,
+                                position: Position::Relative,
                             ) {
                                 #(if line.is_empty() && line_idx == 0 && props.value.is_empty() && !props.placeholder.is_empty() {
                                     Some(element! {
@@ -600,6 +688,47 @@ pub fn EnhancedTextInput(
                             }
                         }
                     }))
+
+                    // Render cursor if component has focus
+                    #(if props.has_focus {
+                        // Calculate cursor position in display coordinates
+                        let cursor_pos = cursor_pos.get();
+                        let (cursor_line, cursor_col) = calculate_cursor_display_position(&props.value, cursor_pos, width as usize - 2);
+
+                        // Get the character at cursor position for semi-transparent effect
+                        let cursor_char = if props.value.is_empty() && !props.placeholder.is_empty() {
+                            // Show placeholder character at cursor position with different styling
+                            props.placeholder.chars().nth(cursor_col).unwrap_or(' ')
+                        } else {
+                            // Show space or character at cursor position
+                            let chars: Vec<char> = props.value.chars().collect();
+                            let char_pos = cursor_pos.min(chars.len());
+                            if char_pos < chars.len() {
+                                chars[char_pos]
+                            } else {
+                                ' '
+                            }
+                        };
+
+                        Some(element! {
+                            View(
+                                key: "cursor",
+                                position: Position::Absolute,
+                                top: cursor_line as u16,
+                                left: cursor_col as u16,
+                                width: 1,
+                                height: 1,
+                                background_color: props.cursor_color.unwrap_or(Color::Rgb { r: 200, g: 200, b: 200 }), // Light grey background
+                            ) {
+                                Text(
+                                    content: cursor_char.to_string(),
+                                    color: Color::Rgb { r: 80, g: 80, b: 80 }, // Dark text for contrast
+                                )
+                            }
+                        })
+                    } else {
+                        None
+                    })
                 }
             }
 
@@ -725,6 +854,16 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
     let input_value = hooks.use_state(|| String::new());
     let is_task_running = hooks.use_state(|| false);
     let current_user_input = hooks.use_state(|| String::new());
+    let cursor_position = hooks.use_state(|| (1usize, 1usize)); // (line, column)
+
+    // Initialize cursor position when input value changes
+    let mut cursor_position_init = cursor_position.clone();
+    let input_value_for_init = input_value.clone();
+    hooks.use_future(async move {
+        let current_input = input_value_for_init.read().clone();
+        let (line, col) = calculate_cursor_position(&current_input, current_input.len());
+        cursor_position_init.set((line, col));
+    });
 
     // Subscribe to UI events to track task status
     let ui_sender_status = context.ui_sender.clone();
@@ -805,8 +944,15 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                         input_value.set(new_value);
                     }
                 },
+                on_cursor_position_change: {
+                    let mut cursor_position = cursor_position.clone();
+                    move |(line, col)| {
+                        cursor_position.set((line, col));
+                    }
+                },
                 on_submit: {
                     let mut input_value = input_value.clone();
+                    let mut cursor_position = cursor_position.clone();
                     let ui_sender = ui_sender.clone();
                     let config = config.clone();
                     let project_path = project_path.clone();
@@ -815,8 +961,9 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                             return;
                         }
 
-                        // Clear input immediately
+                        // Clear input immediately and reset cursor position
                         input_value.set(String::new());
+                        cursor_position.set((1, 1));
 
                         // Use enhanced task submission with file reference processing
                         crate::interactive::app::submit_task_with_file_processing(
@@ -832,7 +979,13 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
             // Status bar - 简约风格
             View(padding: 1) {
                 Text(
-                    content: "~/projects/trae-agent-rs (main*)                       no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
+                    content: {
+                        let (line, col) = cursor_position.get();
+                        format!(
+                            "~/projects/trae-agent-rs (main*)  Ln {}, Col {}                no sandbox (see /docs)                        trae-2.5-pro (100% context left)",
+                            line, col
+                        )
+                    },
                     color: Color::DarkGrey,
                 )
             }
@@ -849,5 +1002,76 @@ mod tests {
         let props = InputSectionProps::default();
         // Just ensure it compiles and creates successfully
         let _ = props;
+    }
+
+    #[test]
+    fn test_calculate_cursor_position() {
+        // Test empty string
+        assert_eq!(calculate_cursor_position("", 0), (1, 1));
+
+        // Test single line
+        assert_eq!(calculate_cursor_position("hello", 0), (1, 1));
+        assert_eq!(calculate_cursor_position("hello", 2), (1, 3));
+        assert_eq!(calculate_cursor_position("hello", 5), (1, 6));
+
+        // Test multiple lines
+        let multiline = "line1\nline2\nline3";
+        assert_eq!(calculate_cursor_position(multiline, 0), (1, 1)); // Start of first line
+        assert_eq!(calculate_cursor_position(multiline, 5), (1, 6)); // End of first line
+        assert_eq!(calculate_cursor_position(multiline, 6), (2, 1)); // Start of second line
+        assert_eq!(calculate_cursor_position(multiline, 11), (2, 6)); // End of second line
+        assert_eq!(calculate_cursor_position(multiline, 12), (3, 1)); // Start of third line
+        assert_eq!(calculate_cursor_position(multiline, 17), (3, 6)); // End of third line
+
+        // Test Unicode characters
+        let unicode_text = "你好\n世界";
+        assert_eq!(calculate_cursor_position(unicode_text, 0), (1, 1)); // Start
+        assert_eq!(calculate_cursor_position(unicode_text, 3), (1, 2)); // After first char
+        assert_eq!(calculate_cursor_position(unicode_text, 6), (1, 3)); // After second char
+        assert_eq!(calculate_cursor_position(unicode_text, 7), (2, 1)); // Start of second line
+        assert_eq!(calculate_cursor_position(unicode_text, 13), (2, 3)); // End
+    }
+
+    #[test]
+    fn test_calculate_cursor_display_position() {
+        // Test empty string
+        assert_eq!(calculate_cursor_display_position("", 0, 80), (0, 0));
+
+        // Test single line
+        assert_eq!(calculate_cursor_display_position("hello", 0, 80), (0, 0));
+        assert_eq!(calculate_cursor_display_position("hello", 2, 80), (0, 2));
+        assert_eq!(calculate_cursor_display_position("hello", 5, 80), (0, 5));
+
+        // Test multiple lines
+        let multiline = "line1\nline2\nline3";
+        assert_eq!(calculate_cursor_display_position(multiline, 0, 80), (0, 0)); // Start of first line
+        assert_eq!(calculate_cursor_display_position(multiline, 5, 80), (0, 5)); // End of first line
+        assert_eq!(calculate_cursor_display_position(multiline, 6, 80), (1, 0)); // Start of second line
+        assert_eq!(calculate_cursor_display_position(multiline, 11, 80), (1, 5)); // End of second line
+        assert_eq!(calculate_cursor_display_position(multiline, 12, 80), (2, 0)); // Start of third line
+        assert_eq!(calculate_cursor_display_position(multiline, 17, 80), (2, 5)); // End of third line
+
+        // Test Unicode characters (Chinese characters have width 2)
+        let unicode_text = "你好\n世界";
+        assert_eq!(
+            calculate_cursor_display_position(unicode_text, 0, 80),
+            (0, 0)
+        ); // Start
+        assert_eq!(
+            calculate_cursor_display_position(unicode_text, 3, 80),
+            (0, 2)
+        ); // After first char (width 2)
+        assert_eq!(
+            calculate_cursor_display_position(unicode_text, 6, 80),
+            (0, 4)
+        ); // After second char (width 2)
+        assert_eq!(
+            calculate_cursor_display_position(unicode_text, 7, 80),
+            (1, 0)
+        ); // Start of second line
+        assert_eq!(
+            calculate_cursor_display_position(unicode_text, 13, 80),
+            (1, 4)
+        ); // End (width 2 per char)
     }
 }
