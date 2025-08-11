@@ -26,9 +26,9 @@ impl SearchResult {
     /// Create a new search result
     pub fn new(file: CachedFile, match_score: MatchScore) -> Self {
         let display_name = if file.is_directory {
-            format!("{}/", file.name)
+            format!("{}/", file.relative_path)
         } else {
-            file.name.clone()
+            file.relative_path.clone()
         };
 
         Self {

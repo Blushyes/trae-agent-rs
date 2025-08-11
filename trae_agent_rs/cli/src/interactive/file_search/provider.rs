@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// Represents a file search result with display information
 #[derive(Debug, Clone)]
 pub struct FileSearchResult {
-    /// Display name for the file (e.g., "main.rs", "src/lib.rs")
+    /// Display name for the file (relative path, e.g., "src/main.rs", "cli/src/lib.rs")
     pub display_name: String,
     /// Full path to insert when selected
     pub insertion_path: String,
@@ -23,10 +23,10 @@ pub trait FileSearchProvider: Send + Sync {
     /// Search for files matching the given query
     /// Returns results sorted by relevance (best matches first)
     fn search(&self, query: &str) -> Vec<FileSearchResult>;
-    
+
     /// Get all available files (for empty query or initial display)
     fn get_all_files(&self) -> Vec<FileSearchResult>;
-    
+
     /// Refresh the file cache (if applicable)
     fn refresh(&mut self) -> anyhow::Result<()>;
 }
@@ -42,7 +42,7 @@ impl DefaultFileSearchProvider {
         let search_system = super::FileSearchSystem::new(project_path, config)?;
         Ok(Self { search_system })
     }
-    
+
     pub fn with_config(project_path: PathBuf, config: super::SearchConfig) -> anyhow::Result<Self> {
         let search_system = super::FileSearchSystem::new(project_path, config)?;
         Ok(Self { search_system })
@@ -55,27 +55,35 @@ impl FileSearchProvider for DefaultFileSearchProvider {
             .search(query)
             .into_iter()
             .map(|result| FileSearchResult {
-                display_name: result.file.name.clone(),
+                display_name: if result.file.is_directory {
+                    format!("{}/", result.file.relative_path)
+                } else {
+                    result.file.relative_path.clone()
+                },
                 insertion_path: result.get_insertion_text(),
                 score: result.match_score.score,
                 is_directory: result.file.is_directory,
             })
             .collect()
     }
-    
+
     fn get_all_files(&self) -> Vec<FileSearchResult> {
         self.search_system
             .get_all_files()
             .into_iter()
             .map(|result| FileSearchResult {
-                display_name: result.file.name.clone(),
+                display_name: if result.file.is_directory {
+                    format!("{}/", result.file.relative_path)
+                } else {
+                    result.file.relative_path.clone()
+                },
                 insertion_path: result.get_insertion_text(),
                 score: result.match_score.score,
                 is_directory: result.file.is_directory,
             })
             .collect()
     }
-    
+
     fn refresh(&mut self) -> anyhow::Result<()> {
         self.search_system.refresh()
     }
@@ -100,18 +108,22 @@ impl FileSearchProvider for MockFileSearchProvider {
         if query.is_empty() {
             return self.files.clone();
         }
-        
+
         self.files
             .iter()
-            .filter(|file| file.display_name.to_lowercase().contains(&query.to_lowercase()))
+            .filter(|file| {
+                file.display_name
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+            })
             .cloned()
             .collect()
     }
-    
+
     fn get_all_files(&self) -> Vec<FileSearchResult> {
         self.files.clone()
     }
-    
+
     fn refresh(&mut self) -> anyhow::Result<()> {
         Ok(())
     }

@@ -134,6 +134,13 @@ The file search system has been refactored for better modularity and maintainabi
 - Enhanced backspace scenario support
 - Comprehensive test coverage for edge cases
 
+**Enhanced Display System**:
+
+- Search results now show relative paths instead of just file names
+- Better context for users to identify the correct file
+- Consistent path display across all search scenarios
+- Improved readability for nested directory structures
+
 ### Code Organization Benefits
 
 1. **Separation of Concerns**: Input parsing separated from application logic
@@ -154,10 +161,11 @@ The file search system has been refactored for better modularity and maintainabi
 1. **Trigger Search**: Enter `@` to show all files
 2. **Real-time Filtering**: Type search terms after `@` for instant results
 3. **Smart Sorting**: Results automatically sorted by match quality and type
-4. **Mixed Content Support**: Use file references within larger text input
-5. **Absolute Path Support**: Use absolute paths like `@/Users/pan/projects/file.txt`
-6. **Path Conversion**: Absolute paths automatically converted to relative paths
-7. **Backspace Handling**: Deleting content after `@path` re-triggers search
+4. **Relative Path Display**: Search results show relative paths (e.g., `cli/src/main.rs`) for better context
+5. **Mixed Content Support**: Use file references within larger text input
+6. **Absolute Path Support**: Use absolute paths like `@/Users/pan/projects/file.txt`
+7. **Path Conversion**: Absolute paths automatically converted to relative paths
+8. **Backspace Handling**: Deleting content after `@path` re-triggers search
 
 ### Advanced Usage Patterns
 
@@ -165,8 +173,11 @@ The file search system has been refactored for better modularity and maintainabi
 
 ```
 @main                    → Search for files containing "main"
+                          Results: cli/src/main.rs, core/src/main.rs
 @src/lib                 → Search in src directory for "lib"
+                          Results: cli/src/lib.rs, core/src/lib.rs
 @.rs                     → Search for Rust files
+                          Results: cli/src/main.rs, core/src/agent.rs, ...
 ```
 
 **Absolute Path Search:**
@@ -174,14 +185,15 @@ The file search system has been refactored for better modularity and maintainabi
 ```
 @/Users/pan/projects/trae-agent-rs/trae_agent_rs/cli/src/
 → Automatically converts to: cli/src/
-→ Shows files in cli/src/ directory
+→ Results: cli/src/main.rs, cli/src/lib.rs, cli/src/interactive/
 ```
 
 **Mixed Content:**
 
 ```
 Please check @config.rs and @src/main.rs for the implementation
-→ Both file references will be processed and made clickable
+→ File references resolved to: core/src/config.rs, cli/src/main.rs
+→ Both paths will be made clickable in the final message
 ```
 
 **Interactive Scenarios:**
@@ -191,7 +203,8 @@ User types: @/absolute/path/file.txt content
 → Search hidden (has content after path)
 
 User deletes " content":
-→ Search re-appears for @/absolute/path/file.txt
+→ Search re-appears showing: relative/path/file.txt
+→ User can select from relative path results
 ```
 
 ## Performance Features

@@ -98,6 +98,7 @@ A comprehensive file search system that enables users to quickly find and refere
 **User Interface:**
 
 - **Trigger**: Type `@` to show all files, `@query` to search
+- **Display**: Search results show relative paths (e.g., `cli/src/main.rs`) for better context
 - **Navigation**: Arrow keys or Ctrl+P/N to navigate results
 - **Selection**: Tab or Enter to insert file path
 - **Cancellation**: Esc to close search results
