@@ -122,24 +122,7 @@ impl AgentOutput for InteractiveOutputHandler {
                     success: _,
                     summary: _,
                 } => {
-                    // Use same format as CLI mode
-                    let stats_msg = format!("📈 Executed {} steps", context.current_step);
-                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(stats_msg));
-
-                    let duration_msg =
-                        format!("⏱️  Duration: {:.2}s", context.execution_time.as_secs_f64());
-                    let _ = ui_sender.send(InteractiveMessage::SystemMessage(duration_msg));
-
-                    // Show token usage if available
-                    if context.token_usage.total_tokens > 0 {
-                        let token_msg = format!(
-                            "🪙 Tokens: {} input + {} output = {} total",
-                            context.token_usage.input_tokens,
-                            context.token_usage.output_tokens,
-                            context.token_usage.total_tokens
-                        );
-                        let _ = ui_sender.send(InteractiveMessage::SystemMessage(token_msg));
-                    }
+                    // ...
                 }
 
                 AgentEvent::ToolExecutionStarted { tool_info } => {
