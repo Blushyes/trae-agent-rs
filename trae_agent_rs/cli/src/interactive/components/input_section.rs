@@ -5,10 +5,52 @@
 
 use crate::interactive::message_handler::AppMessage;
 use iocraft::prelude::*;
-use std::path::PathBuf;
+use std::cmp::min;
+use std::fs;
+use std::path::{Path, PathBuf};
 use tokio::sync::broadcast;
 use trae_agent_core::Config;
 use unicode_width::UnicodeWidthStr;
+
+/// Get file list from the project directory
+fn get_file_list(project_path: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+
+    // Add current directory files
+    if let Ok(entries) = fs::read_dir(project_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Skip hidden files
+            if !file_name.starts_with('.') {
+                if path.is_dir() {
+                    files.push(format!("{}/", file_name));
+                } else {
+                    files.push(file_name);
+                }
+            }
+        }
+    }
+
+    // Sort files: directories first, then files
+    files.sort_by(|a, b| {
+        let a_is_dir = a.ends_with('/');
+        let b_is_dir = b.ends_with('/');
+
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    });
+
+    files
+}
 
 #[derive(Clone, Props)]
 pub struct InputSectionProps {
@@ -46,6 +88,7 @@ pub struct EnhancedTextInputProps {
     pub placeholder: String,
     pub color: Option<Color>,
     pub cursor_color: Option<Color>,
+    pub project_path: PathBuf,
 }
 
 impl Default for EnhancedTextInputProps {
@@ -59,6 +102,7 @@ impl Default for EnhancedTextInputProps {
             placeholder: String::new(),
             color: None,
             cursor_color: None,
+            project_path: PathBuf::new(),
         }
     }
 }
@@ -71,9 +115,15 @@ pub fn EnhancedTextInput(
 ) -> impl Into<AnyElement<'static>> {
     let has_focus = props.has_focus;
     let width = props.width;
+    let project_path = props.project_path.clone();
 
     // Local state for cursor position
     let cursor_pos = hooks.use_state(|| props.value.len());
+
+    // State for file list popup
+    let show_file_list = hooks.use_state(|| false);
+    let file_list = hooks.use_state(|| Vec::<String>::new());
+    let selected_file_index = hooks.use_state(|| 0usize);
 
     // Handle keyboard input
     hooks.use_terminal_events({
@@ -81,6 +131,10 @@ pub fn EnhancedTextInput(
         let mut on_submit = props.on_submit.take();
         let mut value = props.value.clone();
         let mut cursor_pos = cursor_pos.clone();
+        let mut show_file_list = show_file_list.clone();
+        let mut file_list = file_list.clone();
+        let mut selected_file_index = selected_file_index.clone();
+        let project_path = project_path.clone();
 
         move |event| {
             if !has_focus {
@@ -97,10 +151,88 @@ pub fn EnhancedTextInput(
                     let mut pos = cursor_pos.get();
                     let mut changed = false;
 
+                    // Handle file list navigation when it's shown
+                    if *show_file_list.read() {
+                        match code {
+                            KeyCode::Up => {
+                                let current = selected_file_index.get();
+                                if current > 0 {
+                                    selected_file_index.set(current - 1);
+                                }
+                                return;
+                            }
+                            KeyCode::Down => {
+                                let current = selected_file_index.get();
+                                let max_index = file_list.read().len().saturating_sub(1);
+                                if current < max_index {
+                                    selected_file_index.set(current + 1);
+                                }
+                                return;
+                            }
+                            KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                // Ctrl+P: Move up (previous)
+                                let current = selected_file_index.get();
+                                if current > 0 {
+                                    selected_file_index.set(current - 1);
+                                }
+                                return;
+                            }
+                            KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
+                                // Ctrl+N: Move down (next)
+                                let current = selected_file_index.get();
+                                let max_index = file_list.read().len().saturating_sub(1);
+                                if current < max_index {
+                                    selected_file_index.set(current + 1);
+                                }
+                                return;
+                            }
+                            KeyCode::Enter | KeyCode::Tab => {
+                                // Insert selected file
+                                if let Some(selected_file) =
+                                    file_list.read().get(selected_file_index.get())
+                                {
+                                    // Find the @ position and replace it with the file path
+                                    if let Some(at_pos) = value.rfind('@') {
+                                        let before_at = &value[..at_pos];
+                                        let after_at = &value[at_pos + 1..];
+                                        value =
+                                            format!("{}{}{}", before_at, selected_file, after_at);
+                                        pos = at_pos + selected_file.len();
+                                        cursor_pos.set(pos);
+                                        on_change(value.clone());
+                                    }
+                                }
+                                show_file_list.set(false);
+                                return;
+                            }
+                            KeyCode::Esc => {
+                                show_file_list.set(false);
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     match code {
                         KeyCode::Char(c) => {
                             // Ensure we're at a character boundary before inserting
                             let char_pos = value[..pos].chars().count();
+
+                            // Check if we should show file list after typing @
+                            let should_show_list = if c == '@' {
+                                if char_pos == 0 {
+                                    true
+                                } else if let Some(prev_char) =
+                                    value.chars().nth(char_pos.saturating_sub(1))
+                                {
+                                    prev_char == ' ' || prev_char == '\n'
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
                             let mut chars: Vec<char> = value.chars().collect();
                             chars.insert(char_pos, c);
                             value = chars.into_iter().collect();
@@ -112,6 +244,13 @@ pub fn EnhancedTextInput(
                                 .map(|(i, _)| i)
                                 .unwrap_or(value.len());
                             changed = true;
+
+                            if should_show_list {
+                                let files = get_file_list(&project_path);
+                                file_list.set(files);
+                                selected_file_index.set(0);
+                                show_file_list.set(true);
+                            }
                         }
                         KeyCode::Backspace => {
                             if pos > 0 {
@@ -130,13 +269,18 @@ pub fn EnhancedTextInput(
                                     value = chars.into_iter().collect();
                                     pos = char_start;
                                     changed = true;
+
+                                    // Check if we should hide file list after deleting @
+                                    if !value.contains('@') {
+                                        show_file_list.set(false);
+                                    }
                                 }
                             }
                         }
                         KeyCode::Delete => {
                             if pos < value.len() {
                                 // Find the next character boundary to delete safely
-                                if let Some(ch) = value[pos..].chars().next() {
+                                if value[pos..].chars().next().is_some() {
                                     // Convert to chars, remove one, and rebuild string
                                     let mut chars: Vec<char> = value.chars().collect();
                                     let char_pos = value[..pos].chars().count();
@@ -144,6 +288,11 @@ pub fn EnhancedTextInput(
                                         chars.remove(char_pos);
                                         value = chars.into_iter().collect();
                                         changed = true;
+
+                                        // Check if we should hide file list after deleting @
+                                        if !value.contains('@') {
+                                            show_file_list.set(false);
+                                        }
                                     }
                                 }
                             }
@@ -296,46 +445,99 @@ pub fn EnhancedTextInput(
 
     element! {
         View(
-            width: width,
-            height: total_height,
-            border_style: BorderStyle::Round,
-            border_color: Color::Rgb { r: 100, g: 149, b: 237 },
-            padding_left: 1,
-            padding_right: 1,
+            flex_direction: FlexDirection::Column,
             position: Position::Relative,
         ) {
-            // Content area
+            // Input box
             View(
-                flex_direction: FlexDirection::Column,
-                width: 100pct,
-                height: 100pct,
+                width: width,
+                height: total_height,
+                border_style: BorderStyle::Round,
+                border_color: Color::Rgb { r: 100, g: 149, b: 237 },
+                padding_left: 1,
+                padding_right: 1,
+                position: Position::Relative,
             ) {
-                #(display_lines.iter().enumerate().map(|(line_idx, line)| {
-                    element! {
+                // Content area
+                View(
+                    flex_direction: FlexDirection::Column,
+                    width: 100pct,
+                    height: 100pct,
+                ) {
+                    #(display_lines.iter().enumerate().map(|(line_idx, line)| {
+                        element! {
+                            View(
+                                key: format!("line-{}", line_idx),
+                                height: 1,
+                                width: 100pct,
+                            ) {
+                                #(if line.is_empty() && line_idx == 0 && props.value.is_empty() && !props.placeholder.is_empty() {
+                                    Some(element! {
+                                        Text(
+                                            content: &props.placeholder,
+                                            color: Color::DarkGrey,
+                                        )
+                                    })
+                                } else {
+                                    Some(element! {
+                                        Text(
+                                            content: line,
+                                            color: props.color.unwrap_or(Color::White),
+                                        )
+                                    })
+                                })
+                            }
+                        }
+                    }))
+                }
+            }
+
+            // File list popup
+            #(if *show_file_list.read() {
+                let files = file_list.read();
+                let selected_index = selected_file_index.get();
+                let max_display_files = 10;
+                let display_files: Vec<_> = files.iter().take(max_display_files).enumerate().collect();
+
+                Some(element! {
+                    View(
+                        key: "file-list",
+                        width: width,
+                        height: min(files.len(), max_display_files) as u16,
+                        position: Position::Relative,
+                    ) {
                         View(
-                            key: format!("line-{}", line_idx),
-                            height: 1,
+                            flex_direction: FlexDirection::Column,
                             width: 100pct,
+                            height: 100pct,
+                            padding_left: 2,
+                            padding_right: 2,
                         ) {
-                            #(if line.is_empty() && line_idx == 0 && props.value.is_empty() && !props.placeholder.is_empty() {
-                                Some(element! {
-                                    Text(
-                                        content: &props.placeholder,
-                                        color: Color::DarkGrey,
-                                    )
-                                })
-                            } else {
-                                Some(element! {
-                                    Text(
-                                        content: line,
-                                        color: props.color.unwrap_or(Color::White),
-                                    )
-                                })
-                            })
+                            #(display_files.iter().map(|(idx, file)| {
+                                let is_selected = *idx == selected_index;
+                                element! {
+                                    View(
+                                        key: format!("file-{}", idx),
+                                        height: 1,
+                                        width: 100pct,
+                                    ) {
+                                        Text(
+                                            content: (*file).clone(),
+                                            color: if is_selected {
+                                                Color::Rgb { r: 100, g: 149, b: 237 }
+                                            } else {
+                                                Color::DarkGrey
+                                            },
+                                        )
+                                    }
+                                }
+                            }))
                         }
                     }
-                }))
-            }
+                })
+            } else {
+                None
+            })
         }
     }
 }
@@ -485,6 +687,7 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                 placeholder: "Type your message or @path/to/file (Enter to send, Shift+Enter for new line)".to_string(),
                 color: Some(Color::White),
                 cursor_color: Some(Color::Rgb { r: 100, g: 149, b: 237 }),
+                project_path: project_path.clone(),
                 on_change: {
                     let mut input_value = input_value.clone();
                     move |new_value| {
