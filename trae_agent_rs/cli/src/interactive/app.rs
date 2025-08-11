@@ -83,19 +83,20 @@ async fn read_file_content(file_path: &PathBuf) -> Result<String> {
 async fn process_input_with_file_references(
     input: String,
     project_path: &PathBuf,
-    ui_sender: &broadcast::Sender<AppMessage>,
-) -> Result<String> {
+    _ui_sender: &broadcast::Sender<AppMessage>,
+) -> Result<(String, Vec<String>)> {
     let file_refs = parse_file_references(&input, project_path);
 
     if file_refs.is_empty() {
-        // No file references, return original input
-        return Ok(input);
+        // No file references, return original input with empty messages
+        return Ok((input, Vec::new()));
     }
 
     let mut enhanced_input = input.clone();
     let mut file_contents = Vec::new();
+    let mut file_read_messages = Vec::new();
 
-    // Read all referenced files
+    // Read all referenced files and collect read messages
     for file_ref in &file_refs {
         let file_name = file_ref
             .path
@@ -107,16 +108,14 @@ async fn process_input_with_file_references(
             Ok(content) => {
                 let line_count = content.lines().count();
 
-                // Send UI update for file read progress
-                let progress_msg = format!("⎿ Read {} ({} lines)", file_name, line_count);
-                let _ = ui_sender.send(AppMessage::SystemMessage(progress_msg));
+                // Collect file read message instead of sending immediately
+                file_read_messages.push(format!("⎿ Read {} ({} lines)", file_name, line_count));
 
                 file_contents.push(content);
             }
             Err(e) => {
-                // Send error message to UI
-                let error_msg = format!("⎿ Failed to read {}: {}", file_name, e);
-                let _ = ui_sender.send(AppMessage::SystemMessage(error_msg));
+                // Collect error message instead of sending immediately
+                file_read_messages.push(format!("⎿ Failed to read {}: {}", file_name, e));
             }
         }
     }
@@ -130,7 +129,7 @@ async fn process_input_with_file_references(
         }
     }
 
-    Ok(enhanced_input)
+    Ok((enhanced_input, file_read_messages))
 }
 
 /// Enhanced task submission with file reference processing
@@ -143,15 +142,7 @@ pub fn submit_task_with_file_processing(
     use crate::interactive::components::input_section::spawn_ui_agent_task;
     use crate::interactive::message_handler::get_random_status_word;
 
-    // First, broadcast the user message
-    let _ = ui_sender.send(AppMessage::UserMessage(input.clone()));
-
-    // Start with a random status word
-    let _ = ui_sender.send(AppMessage::AgentTaskStarted {
-        operation: get_random_status_word(),
-    });
-
-    // Process file references asynchronously
+    // Process file references asynchronously and send combined message
     let ui_sender_clone = ui_sender.clone();
     let config_clone = config.clone();
     let project_path_clone = project_path.clone();
@@ -160,7 +151,21 @@ pub fn submit_task_with_file_processing(
         let input_clone = input.clone();
         match process_input_with_file_references(input, &project_path_clone, &ui_sender_clone).await
         {
-            Ok(enhanced_input) => {
+            Ok((enhanced_input, file_read_messages)) => {
+                // Send combined user message with file read info
+                let combined_message = if file_read_messages.is_empty() {
+                    input_clone
+                } else {
+                    format!("{}\n{}", input_clone, file_read_messages.join("\n"))
+                };
+
+                let _ = ui_sender_clone.send(AppMessage::UserMessage(combined_message));
+
+                // Start with a random status word
+                let _ = ui_sender_clone.send(AppMessage::AgentTaskStarted {
+                    operation: get_random_status_word(),
+                });
+
                 // Use the existing spawn_ui_agent_task with enhanced input
                 spawn_ui_agent_task(
                     enhanced_input,
@@ -170,9 +175,15 @@ pub fn submit_task_with_file_processing(
                 );
             }
             Err(e) => {
-                // Send error message and still try to process original input
+                // Send combined user message with error info
                 let error_msg = format!("⎿ Error processing file references: {}", e);
-                let _ = ui_sender_clone.send(AppMessage::SystemMessage(error_msg));
+                let combined_message = format!("{}\n{}", input_clone, error_msg);
+                let _ = ui_sender_clone.send(AppMessage::UserMessage(combined_message));
+
+                // Start with a random status word
+                let _ = ui_sender_clone.send(AppMessage::AgentTaskStarted {
+                    operation: get_random_status_word(),
+                });
 
                 // Fall back to original input
                 spawn_ui_agent_task(
