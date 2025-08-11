@@ -1,7 +1,7 @@
 //! Status reporting tool for interactive mode
 //! This tool allows the AI agent to communicate its current status to the user interface
 
-use crate::interactive::app::AppMessage;
+use crate::interactive::message_handler::AppMessage;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::broadcast;
