@@ -1,7 +1,7 @@
 //! Input parsing logic for file search functionality
 
 /// Check if input should trigger file search list
-/// 
+///
 /// Uses simple logic: split by spaces, if last segment starts with @, trigger search
 pub fn should_show_file_search(input: &str, cursor_pos: usize) -> bool {
     if input.is_empty() {
@@ -9,19 +9,19 @@ pub fn should_show_file_search(input: &str, cursor_pos: usize) -> bool {
     }
 
     let safe_cursor_pos = cursor_pos.min(input.len());
-    
+
     // Get text before cursor
     let before_cursor = &input[..safe_cursor_pos];
-    
+
     // Split by spaces and get the last segment
     let last_segment = before_cursor.split(' ').last().unwrap_or("");
-    
+
     // Check if last segment starts with @ (including just @)
     last_segment.starts_with('@')
 }
 
 /// Extract search query from input value after the last @
-/// 
+///
 /// Returns the content after @ in the last space-separated segment
 pub fn extract_search_query(value: &str, cursor_pos: usize) -> Option<String> {
     if value.is_empty() {
@@ -29,13 +29,13 @@ pub fn extract_search_query(value: &str, cursor_pos: usize) -> Option<String> {
     }
 
     let safe_cursor_pos = cursor_pos.min(value.len());
-    
+
     // Get text before cursor
     let before_cursor = &value[..safe_cursor_pos];
-    
+
     // Split by spaces and get the last segment
     let last_segment = before_cursor.split(' ').last().unwrap_or("");
-    
+
     // Check if last segment starts with @
     if last_segment.starts_with('@') {
         if last_segment.len() > 1 {
@@ -66,11 +66,11 @@ mod tests {
 
         // Should show when cursor is at end of path
         assert!(should_show_file_search("@/Users/pan/projects/file.txt", 30));
-        
+
         // Should show when @ is in the last segment after spaces
         assert!(should_show_file_search("hello @main", 11));
         assert!(should_show_file_search("hello world @src/file", 22));
-        
+
         // Should show even for just @ (triggers search with empty query)
         assert!(should_show_file_search("@", 1));
         assert!(should_show_file_search("hello @", 7));
@@ -140,11 +140,11 @@ mod tests {
 
         // Test with spaces - only last segment matters
         assert_eq!(
-            extract_search_query("hello @main", 11), 
+            extract_search_query("hello @main", 11),
             Some("main".to_string())
         );
         assert_eq!(
-            extract_search_query("@old hello @new", 15), 
+            extract_search_query("@old hello @new", 15),
             Some("new".to_string())
         );
 
@@ -184,4 +184,104 @@ mod tests {
             Some("/absolute/path".to_string())
         );
     }
+
+    #[test]
+    fn test_extract_existing_file_references() {
+        // Test no file references
+        assert_eq!(
+            extract_existing_file_references("hello world", 5),
+            vec![] as Vec<String>
+        );
+
+        // Test single file reference (not current query)
+        assert_eq!(
+            extract_existing_file_references("@src/main.rs hello @", 21),
+            vec!["src/main.rs"]
+        );
+
+        // Test multiple file references
+        assert_eq!(
+            extract_existing_file_references("@src/main.rs and @lib/utils.rs check @", 39),
+            vec!["src/main.rs", "lib/utils.rs"]
+        );
+
+        // Test current query exclusion
+        let input = "@src/main.rs and @lib/utils.rs check @config";
+        let cursor_pos = input.len(); // Cursor at end, so @config is current query
+        assert_eq!(
+            extract_existing_file_references(input, cursor_pos),
+            vec!["src/main.rs", "lib/utils.rs"] // @config excluded as current query
+        );
+
+        // Test absolute paths
+        assert_eq!(
+            extract_existing_file_references("@/absolute/path.rs check @", 26),
+            vec!["/absolute/path.rs"]
+        );
+
+        // Test mixed relative and absolute paths
+        assert_eq!(
+            extract_existing_file_references("@src/main.rs @/abs/path.rs @", 29),
+            vec!["src/main.rs", "/abs/path.rs"]
+        );
+    }
+}
+
+/// Extract all file references from input (excluding the current search query)
+///
+/// This function finds all @path references in the input except for the one currently being typed
+pub fn extract_existing_file_references(input: &str, cursor_pos: usize) -> Vec<String> {
+    let mut references = Vec::new();
+
+    // Get the current search query position to exclude it
+    let current_query_start = if let Some(_query) = extract_search_query(input, cursor_pos) {
+        // Find the @ position for current query
+        let safe_cursor_pos = cursor_pos.min(input.len());
+        let before_cursor = &input[..safe_cursor_pos];
+        if let Some(at_pos) = before_cursor.rfind('@') {
+            Some(at_pos)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Simple pattern matching for @path (avoiding regex dependency for now)
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '@' {
+            // Skip the current search query being typed
+            if let Some(current_start) = current_query_start {
+                if i == current_start {
+                    // Skip to end of current query
+                    i += 1;
+                    while i < chars.len() && chars[i] != ' ' {
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Extract path after @
+            i += 1; // Skip @
+            let start = i;
+
+            // Read until space or end
+            while i < chars.len() && chars[i] != ' ' && chars[i] != '@' {
+                i += 1;
+            }
+
+            if i > start {
+                let path: String = chars[start..i].iter().collect();
+                references.push(path);
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    references
 }

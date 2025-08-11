@@ -20,7 +20,9 @@ mod tests;
 // Export the main interfaces
 pub use config::SearchConfig;
 pub use engine::{FileSearchEngine, SearchResult};
-pub use input_parser::{extract_search_query, should_show_file_search};
+pub use input_parser::{
+    extract_existing_file_references, extract_search_query, should_show_file_search,
+};
 pub use provider::{DefaultFileSearchProvider, FileSearchProvider, FileSearchResult};
 
 /// Main search interface
@@ -41,6 +43,11 @@ impl FileSearchSystem {
         self.engine.search(query)
     }
 
+    /// Search for files matching the query, excluding specified paths
+    pub fn search_with_exclusions(&self, query: &str, exclude_paths: &[&str]) -> Vec<SearchResult> {
+        self.engine.search_with_exclusions(query, exclude_paths)
+    }
+
     /// Refresh the file cache
     pub fn refresh(&mut self) -> anyhow::Result<()> {
         self.engine.refresh()
@@ -49,5 +56,10 @@ impl FileSearchSystem {
     /// Get all files (for @ without query)
     pub fn get_all_files(&self) -> Vec<SearchResult> {
         self.engine.get_all_files()
+    }
+
+    /// Get all files excluding specified paths
+    pub fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<SearchResult> {
+        self.engine.get_all_files_with_exclusions(exclude_paths)
     }
 }

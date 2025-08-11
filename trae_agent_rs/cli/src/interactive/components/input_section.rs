@@ -3,7 +3,9 @@
 //! This module provides the input section component that handles
 //! user input and displays the status bar.
 
-use crate::interactive::file_search::{extract_search_query, should_show_file_search};
+use crate::interactive::file_search::{
+    extract_existing_file_references, extract_search_query, should_show_file_search,
+};
 use crate::interactive::file_search::{
     DefaultFileSearchProvider, FileSearchProvider, FileSearchResult,
 };
@@ -223,10 +225,18 @@ pub fn EnhancedTextInput(
                                         if let Some(search_provider) =
                                             search_provider.read().as_ref()
                                         {
+                                            // Extract existing file references to exclude them
+                                            let existing_refs =
+                                                extract_existing_file_references(&value, pos);
+                                            let exclude_paths: Vec<&str> =
+                                                existing_refs.iter().map(|s| s.as_str()).collect();
+
                                             let results = if query.is_empty() {
-                                                search_provider.get_all_files()
+                                                search_provider
+                                                    .get_all_files_with_exclusions(&exclude_paths)
                                             } else {
-                                                search_provider.search(&query)
+                                                search_provider
+                                                    .search_with_exclusions(&query, &exclude_paths)
                                             };
                                             search_results.set(results);
                                             selected_file_index.set(0);
@@ -271,10 +281,26 @@ pub fn EnhancedTextInput(
                                                 if let Some(search_provider) =
                                                     search_provider.read().as_ref()
                                                 {
+                                                    // Extract existing file references to exclude them
+                                                    let existing_refs =
+                                                        extract_existing_file_references(
+                                                            &value, pos,
+                                                        );
+                                                    let exclude_paths: Vec<&str> = existing_refs
+                                                        .iter()
+                                                        .map(|s| s.as_str())
+                                                        .collect();
+
                                                     let results = if query.is_empty() {
-                                                        search_provider.get_all_files()
+                                                        search_provider
+                                                            .get_all_files_with_exclusions(
+                                                                &exclude_paths,
+                                                            )
                                                     } else {
-                                                        search_provider.search(&query)
+                                                        search_provider.search_with_exclusions(
+                                                            &query,
+                                                            &exclude_paths,
+                                                        )
                                                     };
                                                     search_results.set(results);
                                                     selected_file_index.set(0);
@@ -310,10 +336,27 @@ pub fn EnhancedTextInput(
                                                     if let Some(search_provider) =
                                                         search_provider.read().as_ref()
                                                     {
+                                                        // Extract existing file references to exclude them
+                                                        let existing_refs =
+                                                            extract_existing_file_references(
+                                                                &value, pos,
+                                                            );
+                                                        let exclude_paths: Vec<&str> =
+                                                            existing_refs
+                                                                .iter()
+                                                                .map(|s| s.as_str())
+                                                                .collect();
+
                                                         let results = if query.is_empty() {
-                                                            search_provider.get_all_files()
+                                                            search_provider
+                                                                .get_all_files_with_exclusions(
+                                                                    &exclude_paths,
+                                                                )
                                                         } else {
-                                                            search_provider.search(&query)
+                                                            search_provider.search_with_exclusions(
+                                                                &query,
+                                                                &exclude_paths,
+                                                            )
                                                         };
                                                         search_results.set(results);
                                                         selected_file_index.set(0);

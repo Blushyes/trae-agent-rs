@@ -24,8 +24,14 @@ pub trait FileSearchProvider: Send + Sync {
     /// Returns results sorted by relevance (best matches first)
     fn search(&self, query: &str) -> Vec<FileSearchResult>;
 
+    /// Search for files matching the given query, excluding specified paths
+    fn search_with_exclusions(&self, query: &str, exclude_paths: &[&str]) -> Vec<FileSearchResult>;
+
     /// Get all available files (for empty query or initial display)
     fn get_all_files(&self) -> Vec<FileSearchResult>;
+
+    /// Get all available files excluding specified paths
+    fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<FileSearchResult>;
 
     /// Refresh the file cache (if applicable)
     fn refresh(&mut self) -> anyhow::Result<()>;
@@ -67,9 +73,43 @@ impl FileSearchProvider for DefaultFileSearchProvider {
             .collect()
     }
 
+    fn search_with_exclusions(&self, query: &str, exclude_paths: &[&str]) -> Vec<FileSearchResult> {
+        self.search_system
+            .search_with_exclusions(query, exclude_paths)
+            .into_iter()
+            .map(|result| FileSearchResult {
+                display_name: if result.file.is_directory {
+                    format!("{}/", result.file.relative_path)
+                } else {
+                    result.file.relative_path.clone()
+                },
+                insertion_path: result.get_insertion_text(),
+                score: result.match_score.score,
+                is_directory: result.file.is_directory,
+            })
+            .collect()
+    }
+
     fn get_all_files(&self) -> Vec<FileSearchResult> {
         self.search_system
             .get_all_files()
+            .into_iter()
+            .map(|result| FileSearchResult {
+                display_name: if result.file.is_directory {
+                    format!("{}/", result.file.relative_path)
+                } else {
+                    result.file.relative_path.clone()
+                },
+                insertion_path: result.get_insertion_text(),
+                score: result.match_score.score,
+                is_directory: result.file.is_directory,
+            })
+            .collect()
+    }
+
+    fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<FileSearchResult> {
+        self.search_system
+            .get_all_files_with_exclusions(exclude_paths)
             .into_iter()
             .map(|result| FileSearchResult {
                 display_name: if result.file.is_directory {
@@ -120,8 +160,44 @@ impl FileSearchProvider for MockFileSearchProvider {
             .collect()
     }
 
+    fn search_with_exclusions(&self, query: &str, exclude_paths: &[&str]) -> Vec<FileSearchResult> {
+        let base_results = if query.is_empty() {
+            self.files.clone()
+        } else {
+            self.files
+                .iter()
+                .filter(|file| {
+                    file.display_name
+                        .to_lowercase()
+                        .contains(&query.to_lowercase())
+                })
+                .cloned()
+                .collect()
+        };
+
+        // Filter out excluded paths
+        base_results
+            .into_iter()
+            .filter(|file| {
+                !exclude_paths.contains(&file.display_name.as_str())
+                    && !exclude_paths.contains(&file.insertion_path.as_str())
+            })
+            .collect()
+    }
+
     fn get_all_files(&self) -> Vec<FileSearchResult> {
         self.files.clone()
+    }
+
+    fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<FileSearchResult> {
+        self.files
+            .iter()
+            .filter(|file| {
+                !exclude_paths.contains(&file.display_name.as_str())
+                    && !exclude_paths.contains(&file.insertion_path.as_str())
+            })
+            .cloned()
+            .collect()
     }
 
     fn refresh(&mut self) -> anyhow::Result<()> {

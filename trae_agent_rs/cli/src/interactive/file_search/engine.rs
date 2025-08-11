@@ -92,6 +92,11 @@ impl FileSearchEngine {
 
     /// Search for files matching the query
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
+        self.search_with_exclusions(query, &[])
+    }
+
+    /// Search for files matching the query, excluding specified paths
+    pub fn search_with_exclusions(&self, query: &str, exclude_paths: &[&str]) -> Vec<SearchResult> {
         // Ensure cache is fresh
         if !self.cache.is_valid() {
             // Note: In a real implementation, we might want to refresh asynchronously
@@ -138,6 +143,11 @@ impl FileSearchEngine {
         for file in self.cache.get_files() {
             // Apply filters
             if !self.should_include_file(file) {
+                continue;
+            }
+
+            // Check if file should be excluded
+            if self.should_exclude_file(file, exclude_paths) {
                 continue;
             }
 
@@ -190,10 +200,20 @@ impl FileSearchEngine {
 
     /// Get all files without filtering
     pub fn get_all_files(&self) -> Vec<SearchResult> {
+        self.get_all_files_with_exclusions(&[])
+    }
+
+    /// Get all files without filtering, excluding specified paths
+    pub fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<SearchResult> {
         let mut results = Vec::new();
 
         for file in self.cache.get_files() {
             if !self.should_include_file(file) {
+                continue;
+            }
+
+            // Check if file should be excluded
+            if self.should_exclude_file(file, exclude_paths) {
                 continue;
             }
 
@@ -277,6 +297,28 @@ impl FileSearchEngine {
         }
 
         true
+    }
+
+    /// Check if a file should be excluded from search results
+    fn should_exclude_file(&self, file: &CachedFile, exclude_paths: &[&str]) -> bool {
+        // Check against relative path
+        if exclude_paths.contains(&file.relative_path.as_str()) {
+            return true;
+        }
+
+        // Check against absolute path
+        if let Some(abs_path_str) = file.path.to_str() {
+            if exclude_paths.contains(&abs_path_str) {
+                return true;
+            }
+        }
+
+        // Check against file name only (for simple matches)
+        if exclude_paths.contains(&file.name.as_str()) {
+            return true;
+        }
+
+        false
     }
 
     /// Get cache statistics
