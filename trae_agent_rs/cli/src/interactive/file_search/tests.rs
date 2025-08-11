@@ -136,4 +136,83 @@ mod tests {
 
         println!("Insertion text: {}", insertion_text);
     }
+
+    #[test]
+    fn test_exclusion_functionality() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_path = temp_dir.path().to_path_buf();
+
+        // Create test files
+        std::fs::create_dir_all(project_path.join("src")).unwrap();
+        std::fs::write(project_path.join("src/main.rs"), "").unwrap();
+        std::fs::write(project_path.join("src/lib.rs"), "").unwrap();
+        std::fs::write(project_path.join("config.rs"), "").unwrap();
+
+        let config = SearchConfig::default();
+        let search_system = FileSearchSystem::new(project_path, config).unwrap();
+
+        // Test search without exclusions
+        let all_results = search_system.search("rs");
+        assert!(all_results.len() >= 3); // Should find all .rs files
+
+        // Test search with exclusions
+        let exclude_paths = vec!["src/main.rs", "config.rs"];
+        let filtered_results = search_system.search_with_exclusions("rs", &exclude_paths);
+
+        // Should find src directory and src/lib.rs (2 results)
+        assert_eq!(filtered_results.len(), 2);
+
+        // Check that we have the expected files
+        let paths: Vec<&str> = filtered_results
+            .iter()
+            .map(|r| r.file.relative_path.as_str())
+            .collect();
+        assert!(paths.contains(&"src"));
+        assert!(paths.contains(&"src/lib.rs"));
+
+        // Verify excluded files are not in results
+        assert!(!filtered_results
+            .iter()
+            .any(|r| r.file.relative_path == "src/main.rs"));
+        assert!(!filtered_results
+            .iter()
+            .any(|r| r.file.relative_path == "config.rs"));
+    }
+
+    #[test]
+    fn test_get_all_files_with_exclusions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_path = temp_dir.path().to_path_buf();
+
+        // Create test files
+        std::fs::create_dir_all(project_path.join("src")).unwrap();
+        std::fs::write(project_path.join("src/main.rs"), "").unwrap();
+        std::fs::write(project_path.join("src/lib.rs"), "").unwrap();
+        std::fs::write(project_path.join("README.md"), "").unwrap();
+
+        let config = SearchConfig::default();
+        let search_system = FileSearchSystem::new(project_path, config).unwrap();
+
+        // Test get all files without exclusions
+        let all_files = search_system.get_all_files();
+        assert!(all_files.len() >= 3);
+
+        // Test get all files with exclusions
+        let exclude_paths = vec!["src/main.rs"];
+        let filtered_files = search_system.get_all_files_with_exclusions(&exclude_paths);
+
+        // Should have one less file
+        assert_eq!(filtered_files.len(), all_files.len() - 1);
+
+        // Verify excluded file is not in results
+        assert!(!filtered_files
+            .iter()
+            .any(|r| r.file.relative_path == "src/main.rs"));
+        assert!(filtered_files
+            .iter()
+            .any(|r| r.file.relative_path == "src/lib.rs"));
+        assert!(filtered_files
+            .iter()
+            .any(|r| r.file.relative_path == "README.md"));
+    }
 }

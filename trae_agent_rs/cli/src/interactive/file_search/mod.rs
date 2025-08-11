@@ -17,6 +17,9 @@ pub mod provider;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod benchmarks;
+
 // Export the main interfaces
 pub use config::SearchConfig;
 pub use engine::{FileSearchEngine, SearchResult};

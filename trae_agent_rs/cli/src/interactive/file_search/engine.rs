@@ -6,6 +6,7 @@ use super::{
     fuzzy::{FuzzyMatcher, MatchScore, MatchType},
     git_integration::GitIgnoreFilter,
 };
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -139,6 +140,9 @@ impl FileSearchEngine {
 
         let mut results = Vec::new();
 
+        // Convert exclude paths to HashSet for O(1) lookup
+        let exclude_set: HashSet<&str> = exclude_paths.iter().copied().collect();
+
         // Search through cached files
         for file in self.cache.get_files() {
             // Apply filters
@@ -147,32 +151,58 @@ impl FileSearchEngine {
             }
 
             // Check if file should be excluded
-            if self.should_exclude_file(file, exclude_paths) {
+            if self.should_exclude_file(file, &exclude_set) {
                 continue;
             }
 
-            // Try to match the query against file name, relative path, and absolute path
-            let name_match = self.matcher.match_string(&search_query, &file.name);
-            let relative_path_match = self
-                .matcher
-                .match_string(&search_query, &file.relative_path);
-            let absolute_path_match = self
-                .matcher
-                .match_string(&search_query, &file.path.to_string_lossy());
+            // Try to match with early exit optimization and cached lowercase strings
+            // Start with file name (most likely to match and fastest)
+            let mut best_match = self.matcher.match_string_with_lowercase(
+                &search_query,
+                &file.name,
+                Some(&file.name_lowercase),
+            );
 
-            // Use the best of the three matches
-            let best_match = [name_match, relative_path_match, absolute_path_match]
-                .into_iter()
-                .flatten()
-                .max_by(|a, b| {
-                    a.score
-                        .partial_cmp(&b.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
+            // If we don't have a good match yet, try relative path
+            if best_match.as_ref().map_or(true, |m| m.score < 0.9) {
+                if let Some(path_match) = self.matcher.match_string_with_lowercase(
+                    &search_query,
+                    &file.relative_path,
+                    Some(&file.relative_path_lowercase),
+                ) {
+                    if best_match
+                        .as_ref()
+                        .map_or(true, |m| path_match.score > m.score)
+                    {
+                        best_match = Some(path_match);
+                    }
+                }
+            }
+
+            // Only try absolute path if we still don't have a good match
+            if best_match.as_ref().map_or(true, |m| m.score < 0.8) {
+                if let Some(abs_match) = self
+                    .matcher
+                    .match_string(&search_query, &file.path.to_string_lossy())
+                {
+                    if best_match
+                        .as_ref()
+                        .map_or(true, |m| abs_match.score > m.score)
+                    {
+                        best_match = Some(abs_match);
+                    }
+                }
+            }
 
             if let Some(match_score) = best_match {
                 if match_score.score >= self.config.min_score_threshold {
+                    let score = match_score.score; // Store score before move
                     results.push(SearchResult::new(file.clone(), match_score));
+
+                    // Early exit if we have enough high-quality results
+                    if results.len() >= self.config.max_results && score > 0.8 {
+                        break;
+                    }
                 }
             }
         }
@@ -207,13 +237,16 @@ impl FileSearchEngine {
     pub fn get_all_files_with_exclusions(&self, exclude_paths: &[&str]) -> Vec<SearchResult> {
         let mut results = Vec::new();
 
+        // Convert exclude paths to HashSet for O(1) lookup
+        let exclude_set: HashSet<&str> = exclude_paths.iter().copied().collect();
+
         for file in self.cache.get_files() {
             if !self.should_include_file(file) {
                 continue;
             }
 
             // Check if file should be excluded
-            if self.should_exclude_file(file, exclude_paths) {
+            if self.should_exclude_file(file, &exclude_set) {
                 continue;
             }
 
@@ -300,21 +333,21 @@ impl FileSearchEngine {
     }
 
     /// Check if a file should be excluded from search results
-    fn should_exclude_file(&self, file: &CachedFile, exclude_paths: &[&str]) -> bool {
+    fn should_exclude_file(&self, file: &CachedFile, exclude_set: &HashSet<&str>) -> bool {
         // Check against relative path
-        if exclude_paths.contains(&file.relative_path.as_str()) {
+        if exclude_set.contains(file.relative_path.as_str()) {
             return true;
         }
 
         // Check against absolute path
         if let Some(abs_path_str) = file.path.to_str() {
-            if exclude_paths.contains(&abs_path_str) {
+            if exclude_set.contains(abs_path_str) {
                 return true;
             }
         }
 
         // Check against file name only (for simple matches)
-        if exclude_paths.contains(&file.name.as_str()) {
+        if exclude_set.contains(file.name.as_str()) {
             return true;
         }
 

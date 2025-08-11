@@ -141,6 +141,21 @@ The file search system has been refactored for better modularity and maintainabi
 - Consistent path display across all search scenarios
 - Improved readability for nested directory structures
 
+**Smart Exclusion System**:
+
+- Automatically excludes already referenced files from search results
+- Prevents duplicate file selection in complex queries
+- Efficient HashSet-based exclusion checking for O(1) lookup performance
+- Cached file reference parsing to avoid repeated computation
+
+**Performance Optimizations**:
+
+- Pre-computed lowercase strings in file cache for faster matching
+- Early exit optimization in fuzzy matching (stops at high-quality matches)
+- HashSet-based exclusion checking instead of linear search
+- Cached file reference extraction to avoid repeated parsing
+- Smart matching order: filename → relative path → absolute path
+
 ### Code Organization Benefits
 
 1. **Separation of Concerns**: Input parsing separated from application logic
@@ -162,10 +177,11 @@ The file search system has been refactored for better modularity and maintainabi
 2. **Real-time Filtering**: Type search terms after `@` for instant results
 3. **Smart Sorting**: Results automatically sorted by match quality and type
 4. **Relative Path Display**: Search results show relative paths (e.g., `cli/src/main.rs`) for better context
-5. **Mixed Content Support**: Use file references within larger text input
-6. **Absolute Path Support**: Use absolute paths like `@/Users/pan/projects/file.txt`
-7. **Path Conversion**: Absolute paths automatically converted to relative paths
-8. **Backspace Handling**: Deleting content after `@path` re-triggers search
+5. **Smart Exclusion**: Already referenced files are automatically excluded from search results
+6. **Mixed Content Support**: Use file references within larger text input
+7. **Absolute Path Support**: Use absolute paths like `@/Users/pan/projects/file.txt`
+8. **Path Conversion**: Absolute paths automatically converted to relative paths
+9. **Backspace Handling**: Deleting content after `@path` re-triggers search
 
 ### Advanced Usage Patterns
 
@@ -194,6 +210,15 @@ The file search system has been refactored for better modularity and maintainabi
 Please check @config.rs and @src/main.rs for the implementation
 → File references resolved to: core/src/config.rs, cli/src/main.rs
 → Both paths will be made clickable in the final message
+```
+
+**Smart Exclusion:**
+
+```
+Input: "Check @src/main.rs and @config.rs, also need @"
+→ Search results will exclude src/main.rs and config.rs
+→ Only shows remaining files: src/lib.rs, README.md, etc.
+→ Prevents duplicate file selection
 ```
 
 **Interactive Scenarios:**

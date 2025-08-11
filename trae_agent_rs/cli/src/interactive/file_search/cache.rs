@@ -25,6 +25,12 @@ pub struct CachedFile {
 
     /// Last modified time
     pub modified: Option<std::time::SystemTime>,
+
+    /// Cached lowercase name for faster searching
+    pub name_lowercase: String,
+
+    /// Cached lowercase relative path for faster searching
+    pub relative_path_lowercase: String,
 }
 
 /// High-performance file cache
@@ -125,7 +131,7 @@ impl FileCache {
             let cached_file = CachedFile {
                 path: path.clone(),
                 relative_path: relative_path.clone(),
-                name: file_name,
+                name: file_name.clone(),
                 is_directory,
                 size: if is_directory {
                     None
@@ -133,6 +139,8 @@ impl FileCache {
                     metadata.as_ref().map(|m| m.len())
                 },
                 modified: metadata.and_then(|m| m.modified().ok()),
+                name_lowercase: file_name.to_lowercase(),
+                relative_path_lowercase: relative_path.to_lowercase(),
             };
 
             self.files.insert(relative_path.clone(), cached_file);

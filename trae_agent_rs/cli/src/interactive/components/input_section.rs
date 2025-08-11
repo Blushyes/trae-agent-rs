@@ -91,6 +91,10 @@ pub fn EnhancedTextInput(
     let selected_file_index = hooks.use_state(|| 0usize);
     let current_query = hooks.use_state(|| String::new());
 
+    // Cache for existing file references to avoid repeated parsing
+    let cached_existing_refs = hooks.use_state(|| Vec::<String>::new());
+    let last_input_for_refs = hooks.use_state(|| String::new());
+
     // Initialize search provider
     let search_provider =
         hooks.use_state(|| DefaultFileSearchProvider::new(project_path.clone()).ok());
@@ -107,6 +111,8 @@ pub fn EnhancedTextInput(
         let mut current_query = current_query.clone();
         let search_provider = search_provider.clone();
         let _project_path = project_path.clone();
+        let mut cached_existing_refs = cached_existing_refs.clone();
+        let mut last_input_for_refs = last_input_for_refs.clone();
 
         move |event| {
             if !has_focus {
@@ -225,9 +231,18 @@ pub fn EnhancedTextInput(
                                         if let Some(search_provider) =
                                             search_provider.read().as_ref()
                                         {
-                                            // Extract existing file references to exclude them
-                                            let existing_refs =
-                                                extract_existing_file_references(&value, pos);
+                                            // Get cached existing file references to exclude them
+                                            let existing_refs = if value
+                                                != *last_input_for_refs.read()
+                                            {
+                                                let refs =
+                                                    extract_existing_file_references(&value, pos);
+                                                cached_existing_refs.set(refs.clone());
+                                                last_input_for_refs.set(value.clone());
+                                                refs
+                                            } else {
+                                                cached_existing_refs.read().clone()
+                                            };
                                             let exclude_paths: Vec<&str> =
                                                 existing_refs.iter().map(|s| s.as_str()).collect();
 
@@ -281,11 +296,19 @@ pub fn EnhancedTextInput(
                                                 if let Some(search_provider) =
                                                     search_provider.read().as_ref()
                                                 {
-                                                    // Extract existing file references to exclude them
-                                                    let existing_refs =
-                                                        extract_existing_file_references(
+                                                    // Get cached existing file references to exclude them
+                                                    let existing_refs = if value
+                                                        != *last_input_for_refs.read()
+                                                    {
+                                                        let refs = extract_existing_file_references(
                                                             &value, pos,
                                                         );
+                                                        cached_existing_refs.set(refs.clone());
+                                                        last_input_for_refs.set(value.clone());
+                                                        refs
+                                                    } else {
+                                                        cached_existing_refs.read().clone()
+                                                    };
                                                     let exclude_paths: Vec<&str> = existing_refs
                                                         .iter()
                                                         .map(|s| s.as_str())
@@ -336,11 +359,20 @@ pub fn EnhancedTextInput(
                                                     if let Some(search_provider) =
                                                         search_provider.read().as_ref()
                                                     {
-                                                        // Extract existing file references to exclude them
-                                                        let existing_refs =
-                                                            extract_existing_file_references(
-                                                                &value, pos,
-                                                            );
+                                                        // Get cached existing file references to exclude them
+                                                        let existing_refs = if value
+                                                            != *last_input_for_refs.read()
+                                                        {
+                                                            let refs =
+                                                                extract_existing_file_references(
+                                                                    &value, pos,
+                                                                );
+                                                            cached_existing_refs.set(refs.clone());
+                                                            last_input_for_refs.set(value.clone());
+                                                            refs
+                                                        } else {
+                                                            cached_existing_refs.read().clone()
+                                                        };
                                                         let exclude_paths: Vec<&str> =
                                                             existing_refs
                                                                 .iter()

@@ -224,6 +224,12 @@ mod tests {
             extract_existing_file_references("@src/main.rs @/abs/path.rs @", 29),
             vec!["src/main.rs", "/abs/path.rs"]
         );
+
+        // Test edge case: cursor in middle of existing reference
+        assert_eq!(
+            extract_existing_file_references("@src/main.rs @config.rs", 15), // cursor in @config.rs
+            vec!["src/main.rs"] // Only @src/main.rs should be excluded
+        );
     }
 }
 

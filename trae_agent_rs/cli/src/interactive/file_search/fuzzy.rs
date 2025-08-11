@@ -46,6 +46,17 @@ impl FuzzyMatcher {
 
     /// Match a query against a target string
     pub fn match_string(&self, query: &str, target: &str) -> Option<MatchScore> {
+        self.match_string_with_lowercase(query, target, None)
+    }
+
+    /// Match a query against a target string with optional pre-computed lowercase target
+    /// This avoids repeated lowercase conversions for better performance
+    pub fn match_string_with_lowercase(
+        &self,
+        query: &str,
+        target: &str,
+        target_lowercase: Option<&str>,
+    ) -> Option<MatchScore> {
         if query.is_empty() {
             return Some(MatchScore {
                 score: 1.0,
@@ -62,7 +73,10 @@ impl FuzzyMatcher {
         let target = if self.case_sensitive {
             target.to_string()
         } else {
-            target.to_lowercase()
+            // Use pre-computed lowercase if available, otherwise compute it
+            target_lowercase
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| target.to_lowercase())
         };
 
         // Try different match types in order of priority
