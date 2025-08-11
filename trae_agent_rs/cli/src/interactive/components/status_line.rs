@@ -76,6 +76,10 @@ pub fn DynamicStatusLine(
                     is_processing_clone.set(false);
                     operation_clone.set(String::new());
                 }
+                AppMessage::AgentExecutionInterrupted { .. } => {
+                    is_processing_clone.set(false);
+                    operation_clone.set(String::new());
+                }
                 AppMessage::TokenUpdate { tokens } => {
                     target_tokens_clone.set(tokens);
                     token_animation_start_clone.set(std::time::Instant::now());

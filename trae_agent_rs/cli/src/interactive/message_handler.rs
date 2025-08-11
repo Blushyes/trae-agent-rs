@@ -1,5 +1,5 @@
 //! Message handling and processing for interactive mode
-//! 
+//!
 //! This module handles message conversion, content block identification,
 //! and message processing logic for the interactive UI.
 
@@ -71,6 +71,7 @@ pub enum AppMessage {
     InteractiveUpdate(InteractiveMessage),
     AgentTaskStarted { operation: String },
     AgentExecutionCompleted,
+    AgentExecutionInterrupted { user_input: String },
     TokenUpdate { tokens: u32 },
 }
 
@@ -207,6 +208,12 @@ pub fn app_message_to_ui_message(
         },
         AppMessage::AgentTaskStarted { .. } => None,
         AppMessage::AgentExecutionCompleted => None,
+        AppMessage::AgentExecutionInterrupted { user_input: _ } => Some((
+            "system".to_string(),
+            "  \x1b[31m⏹ Interrupted by user\x1b[0m".to_string(),
+            Some(generate_message_id()),
+            false,
+        )),
         AppMessage::TokenUpdate { .. } => None, // Token updates don't create UI messages, they update state directly
     }
 }
@@ -233,11 +240,26 @@ mod tests {
 
     #[test]
     fn test_identify_content_block() {
-        assert_eq!(identify_content_block("Hello", "user"), ContentBlock::UserInput);
-        assert_eq!(identify_content_block("⏺ Running command", "agent"), ContentBlock::ToolStatus);
-        assert_eq!(identify_content_block("⎿ Result", "agent"), ContentBlock::ToolResult);
-        assert_eq!(identify_content_block("total 10", "agent"), ContentBlock::ToolResult);
-        assert_eq!(identify_content_block("Regular text", "agent"), ContentBlock::AgentText);
+        assert_eq!(
+            identify_content_block("Hello", "user"),
+            ContentBlock::UserInput
+        );
+        assert_eq!(
+            identify_content_block("⏺ Running command", "agent"),
+            ContentBlock::ToolStatus
+        );
+        assert_eq!(
+            identify_content_block("⎿ Result", "agent"),
+            ContentBlock::ToolResult
+        );
+        assert_eq!(
+            identify_content_block("total 10", "agent"),
+            ContentBlock::ToolResult
+        );
+        assert_eq!(
+            identify_content_block("Regular text", "agent"),
+            ContentBlock::AgentText
+        );
     }
 
     #[test]

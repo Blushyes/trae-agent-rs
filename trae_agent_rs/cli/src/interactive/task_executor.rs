@@ -1,5 +1,5 @@
 //! Task execution module for interactive mode
-//! 
+//!
 //! This module handles agent task execution with UI integration,
 //! including token tracking and status updates.
 
@@ -82,6 +82,8 @@ pub async fn execute_agent_task(
     project_path: PathBuf,
     ui_sender: broadcast::Sender<AppMessage>,
 ) -> Result<()> {
+    // Create a receiver to listen for interruption signals
+    let mut interrupt_receiver = ui_sender.subscribe();
     use crate::tools::StatusReportToolFactory;
     use trae_agent_core::tools::ToolRegistry;
 
@@ -132,9 +134,33 @@ pub async fn execute_agent_task(
         tool_registry,
     )
     .await?;
-    agent
-        .execute_task_with_context(&task, &project_path)
-        .await?;
+
+    // Execute task with interruption support
+    let task_future = agent.execute_task_with_context(&task, &project_path);
+
+    // Listen for interruption signals
+    let interrupt_future = async {
+        loop {
+            match interrupt_receiver.recv().await {
+                Ok(AppMessage::AgentExecutionInterrupted { .. }) => {
+                    return Err(anyhow::anyhow!("Task interrupted by user"));
+                }
+                Ok(_) => continue, // Ignore other messages
+                Err(_) => break,   // Channel closed
+            }
+        }
+        Ok(())
+    };
+
+    // Race between task execution and interruption
+    tokio::select! {
+        result = task_future => {
+            result?;
+        }
+        interrupt_result = interrupt_future => {
+            interrupt_result?;
+        }
+    }
 
     Ok(())
 }
@@ -143,6 +169,7 @@ pub async fn execute_agent_task(
 mod tests {
     use super::*;
     use tokio::sync::broadcast;
+    use trae_agent_core::output::AgentOutput;
 
     #[test]
     fn test_token_tracking_output_handler_creation() {
@@ -152,7 +179,7 @@ mod tests {
             realtime_updates: true,
             show_tool_details: true,
         };
-        
+
         let handler = TokenTrackingOutputHandler::new(config, interactive_sender, ui_sender);
         assert!(handler.supports_realtime_updates());
     }

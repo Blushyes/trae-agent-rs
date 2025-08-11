@@ -49,23 +49,39 @@ pub fn spawn_ui_agent_task(
         operation: get_random_status_word(),
     });
 
-    // Change status word once after 1 second
+    // Create a cancellation token for the timer
+    let (cancel_sender, mut cancel_receiver) = tokio::sync::oneshot::channel::<()>();
+
+    // Change status word once after 1 second (unless cancelled)
     let ui_sender_timer = ui_sender.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _ = ui_sender_timer.send(AppMessage::AgentTaskStarted {
-            operation: get_random_status_word(),
-        });
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
+                let _ = ui_sender_timer.send(AppMessage::AgentTaskStarted {
+                    operation: get_random_status_word(),
+                });
+            }
+            _ = &mut cancel_receiver => {
+                // Timer cancelled, do nothing
+            }
+        }
     });
 
     // Execute agent task
     tokio::spawn(async move {
         match execute_agent_task(input, config, project_path, ui_sender.clone()).await {
             Ok(_) => {
+                let _ = cancel_sender.send(()); // Cancel the timer
                 let _ = ui_sender.send(AppMessage::AgentExecutionCompleted);
             }
             Err(e) => {
-                let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
+                let _ = cancel_sender.send(()); // Cancel the timer
+                                                // Check if it's an interruption error
+                if e.to_string().contains("Task interrupted by user") {
+                    // Don't show error message for user interruptions
+                } else {
+                    let _ = ui_sender.send(AppMessage::SystemMessage(format!("❌ Error: {}", e)));
+                }
                 let _ = ui_sender.send(AppMessage::AgentExecutionCompleted);
             }
         }
@@ -75,11 +91,38 @@ pub fn spawn_ui_agent_task(
 /// Input Section Component - Fixed bottom area for input and status
 #[component]
 pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<AnyElement<'static>> {
-    // Local input state
-    let input_value = hooks.use_state(|| String::new());
-
     // Subscribe to keyboard and dispatch events
     let context = &props.context;
+
+    // Local input state
+    let input_value = hooks.use_state(|| String::new());
+    let is_task_running = hooks.use_state(|| false);
+    let current_user_input = hooks.use_state(|| String::new());
+
+    // Subscribe to UI events to track task status
+    let ui_sender_status = context.ui_sender.clone();
+    let mut is_task_running_clone = is_task_running.clone();
+    let mut current_user_input_clone = current_user_input.clone();
+    hooks.use_future(async move {
+        let mut rx = ui_sender_status.subscribe();
+        while let Ok(event) = rx.recv().await {
+            match event {
+                AppMessage::AgentTaskStarted { .. } => {
+                    is_task_running_clone.set(true);
+                }
+                AppMessage::AgentExecutionCompleted
+                | AppMessage::AgentExecutionInterrupted { .. } => {
+                    is_task_running_clone.set(false);
+                    current_user_input_clone.set(String::new());
+                }
+                AppMessage::UserMessage(input) => {
+                    current_user_input_clone.set(input);
+                }
+                _ => {}
+            }
+        }
+    });
+
     let config = context.config.clone();
     let project_path = context.project_path.clone();
     let ui_sender = context.ui_sender.clone();
@@ -89,6 +132,8 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
         let config = config.clone();
         let project_path = project_path.clone();
         let ui_sender = ui_sender.clone();
+        let is_task_running = is_task_running.clone();
+        let current_user_input = current_user_input.clone();
         move |event| {
             match event {
                 TerminalEvent::Key(KeyEvent { code, kind, .. })
@@ -104,6 +149,14 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                             let mut current = input_value.read().clone();
                             if current.pop().is_some() {
                                 input_value.set(current);
+                            }
+                        }
+                        KeyCode::Esc => {
+                            // Handle ESC key - interrupt current task if running
+                            if *is_task_running.read() {
+                                let user_input = current_user_input.read().clone();
+                                let _ = ui_sender
+                                    .send(AppMessage::AgentExecutionInterrupted { user_input });
                             }
                         }
                         KeyCode::Enter => {
