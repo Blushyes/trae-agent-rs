@@ -99,8 +99,18 @@ pub fn EnhancedTextInput(
 
                     match code {
                         KeyCode::Char(c) => {
-                            value.insert(pos, c);
-                            pos += c.len_utf8();
+                            // Ensure we're at a character boundary before inserting
+                            let char_pos = value[..pos].chars().count();
+                            let mut chars: Vec<char> = value.chars().collect();
+                            chars.insert(char_pos, c);
+                            value = chars.into_iter().collect();
+
+                            // Update position to after the inserted character
+                            pos = value
+                                .char_indices()
+                                .nth(char_pos + 1)
+                                .map(|(i, _)| i)
+                                .unwrap_or(value.len());
                             changed = true;
                         }
                         KeyCode::Backspace => {
@@ -140,9 +150,18 @@ pub fn EnhancedTextInput(
                         }
                         KeyCode::Enter => {
                             if modifiers.contains(KeyModifiers::SHIFT) {
-                                // Shift+Enter adds newline
-                                value.insert(pos, '\n');
-                                pos += 1;
+                                // Shift+Enter adds newline - use safe character insertion
+                                let char_pos = value[..pos].chars().count();
+                                let mut chars: Vec<char> = value.chars().collect();
+                                chars.insert(char_pos, '\n');
+                                value = chars.into_iter().collect();
+
+                                // Update position to after the inserted newline
+                                pos = value
+                                    .char_indices()
+                                    .nth(char_pos + 1)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(value.len());
                                 changed = true;
                             } else {
                                 // Regular Enter submits
