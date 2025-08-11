@@ -3,53 +3,42 @@
 //! This module provides the input section component that handles
 //! user input and displays the status bar.
 
+use crate::interactive::file_search::{FileSearchSystem, SearchConfig, SearchResult};
 use crate::interactive::message_handler::AppMessage;
 use iocraft::prelude::*;
 use std::cmp::min;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::sync::broadcast;
 use trae_agent_core::Config;
 use unicode_width::UnicodeWidthStr;
 
-/// Get file list from the project directory
-fn get_file_list(project_path: &Path) -> Vec<String> {
-    let mut files = Vec::new();
+/// Extract search query from input value after the last @
+fn extract_search_query(value: &str, cursor_pos: usize) -> Option<String> {
+    // Find the last @ before cursor position
+    let before_cursor = &value[..cursor_pos];
+    if let Some(at_pos) = before_cursor.rfind('@') {
+        // Check if @ is at the beginning or after a space/newline
+        let is_valid_at = if at_pos == 0 {
+            true
+        } else if let Some(prev_char) = value.chars().nth(at_pos.saturating_sub(1)) {
+            prev_char == ' ' || prev_char == '\n'
+        } else {
+            false
+        };
 
-    // Add current directory files
-    if let Ok(entries) = fs::read_dir(project_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            // Skip hidden files
-            if !file_name.starts_with('.') {
-                if path.is_dir() {
-                    files.push(format!("{}/", file_name));
-                } else {
-                    files.push(file_name);
+        if is_valid_at {
+            // Extract query from @ to cursor position
+            let query_start = at_pos + 1;
+            if query_start <= cursor_pos {
+                let query = &value[query_start..cursor_pos];
+                // Make sure query doesn't contain spaces (which would end the search)
+                if !query.contains(' ') && !query.contains('\n') {
+                    return Some(query.to_string());
                 }
             }
         }
     }
-
-    // Sort files: directories first, then files
-    files.sort_by(|a, b| {
-        let a_is_dir = a.ends_with('/');
-        let b_is_dir = b.ends_with('/');
-
-        match (a_is_dir, b_is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.cmp(b),
-        }
-    });
-
-    files
+    None
 }
 
 #[derive(Clone, Props)]
@@ -120,10 +109,17 @@ pub fn EnhancedTextInput(
     // Local state for cursor position
     let cursor_pos = hooks.use_state(|| props.value.len());
 
-    // State for file list popup
+    // State for file search popup
     let show_file_list = hooks.use_state(|| false);
-    let file_list = hooks.use_state(|| Vec::<String>::new());
+    let search_results = hooks.use_state(|| Vec::<SearchResult>::new());
     let selected_file_index = hooks.use_state(|| 0usize);
+    let current_query = hooks.use_state(|| String::new());
+
+    // Initialize search system
+    let search_system = hooks.use_state(|| {
+        let config = SearchConfig::default();
+        FileSearchSystem::new(project_path.clone(), config).ok()
+    });
 
     // Handle keyboard input
     hooks.use_terminal_events({
@@ -132,9 +128,11 @@ pub fn EnhancedTextInput(
         let mut value = props.value.clone();
         let mut cursor_pos = cursor_pos.clone();
         let mut show_file_list = show_file_list.clone();
-        let mut file_list = file_list.clone();
+        let mut search_results = search_results.clone();
         let mut selected_file_index = selected_file_index.clone();
-        let project_path = project_path.clone();
+        let mut current_query = current_query.clone();
+        let search_system = search_system.clone();
+        let _project_path = project_path.clone();
 
         move |event| {
             if !has_focus {
@@ -163,7 +161,7 @@ pub fn EnhancedTextInput(
                             }
                             KeyCode::Down => {
                                 let current = selected_file_index.get();
-                                let max_index = file_list.read().len().saturating_sub(1);
+                                let max_index = search_results.read().len().saturating_sub(1);
                                 if current < max_index {
                                     selected_file_index.set(current + 1);
                                 }
@@ -180,7 +178,7 @@ pub fn EnhancedTextInput(
                             KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
                                 // Ctrl+N: Move down (next)
                                 let current = selected_file_index.get();
-                                let max_index = file_list.read().len().saturating_sub(1);
+                                let max_index = search_results.read().len().saturating_sub(1);
                                 if current < max_index {
                                     selected_file_index.set(current + 1);
                                 }
@@ -188,16 +186,17 @@ pub fn EnhancedTextInput(
                             }
                             KeyCode::Enter | KeyCode::Tab => {
                                 // Insert selected file
-                                if let Some(selected_file) =
-                                    file_list.read().get(selected_file_index.get())
+                                if let Some(selected_result) =
+                                    search_results.read().get(selected_file_index.get())
                                 {
                                     // Find the @ position and replace it with the file path
                                     if let Some(at_pos) = value.rfind('@') {
                                         let before_at = &value[..at_pos];
                                         let after_at = &value[at_pos + 1..];
+                                        let insertion_text = selected_result.get_insertion_text();
                                         value =
-                                            format!("{}{}{}", before_at, selected_file, after_at);
-                                        pos = at_pos + selected_file.len();
+                                            format!("{}{}{}", before_at, insertion_text, after_at);
+                                        pos = at_pos + insertion_text.len();
                                         cursor_pos.set(pos);
                                         on_change(value.clone());
                                     }
@@ -246,10 +245,33 @@ pub fn EnhancedTextInput(
                             changed = true;
 
                             if should_show_list {
-                                let files = get_file_list(&project_path);
-                                file_list.set(files);
-                                selected_file_index.set(0);
-                                show_file_list.set(true);
+                                // Initialize search with empty query (show all files)
+                                if let Some(search_sys) = search_system.read().as_ref() {
+                                    let results = search_sys.get_all_files();
+                                    search_results.set(results);
+                                    selected_file_index.set(0);
+                                    current_query.set(String::new());
+                                    show_file_list.set(true);
+                                }
+                            } else if *show_file_list.read() {
+                                // Update search if we're already showing the list
+                                if let Some(query) = extract_search_query(&value, pos) {
+                                    if query != *current_query.read() {
+                                        if let Some(search_sys) = search_system.read().as_ref() {
+                                            let results = if query.is_empty() {
+                                                search_sys.get_all_files()
+                                            } else {
+                                                search_sys.search(&query)
+                                            };
+                                            search_results.set(results);
+                                            selected_file_index.set(0);
+                                            current_query.set(query);
+                                        }
+                                    }
+                                } else {
+                                    // No valid query found, hide the list
+                                    show_file_list.set(false);
+                                }
                             }
                         }
                         KeyCode::Backspace => {
@@ -270,9 +292,27 @@ pub fn EnhancedTextInput(
                                     pos = char_start;
                                     changed = true;
 
-                                    // Check if we should hide file list after deleting @
-                                    if !value.contains('@') {
-                                        show_file_list.set(false);
+                                    // Update search or hide file list
+                                    if *show_file_list.read() {
+                                        if let Some(query) = extract_search_query(&value, pos) {
+                                            if query != *current_query.read() {
+                                                if let Some(search_sys) =
+                                                    search_system.read().as_ref()
+                                                {
+                                                    let results = if query.is_empty() {
+                                                        search_sys.get_all_files()
+                                                    } else {
+                                                        search_sys.search(&query)
+                                                    };
+                                                    search_results.set(results);
+                                                    selected_file_index.set(0);
+                                                    current_query.set(query);
+                                                }
+                                            }
+                                        } else {
+                                            // No valid query found, hide the list
+                                            show_file_list.set(false);
+                                        }
                                     }
                                 }
                             }
@@ -289,9 +329,27 @@ pub fn EnhancedTextInput(
                                         value = chars.into_iter().collect();
                                         changed = true;
 
-                                        // Check if we should hide file list after deleting @
-                                        if !value.contains('@') {
-                                            show_file_list.set(false);
+                                        // Update search or hide file list
+                                        if *show_file_list.read() {
+                                            if let Some(query) = extract_search_query(&value, pos) {
+                                                if query != *current_query.read() {
+                                                    if let Some(search_sys) =
+                                                        search_system.read().as_ref()
+                                                    {
+                                                        let results = if query.is_empty() {
+                                                            search_sys.get_all_files()
+                                                        } else {
+                                                            search_sys.search(&query)
+                                                        };
+                                                        search_results.set(results);
+                                                        selected_file_index.set(0);
+                                                        current_query.set(query);
+                                                    }
+                                                }
+                                            } else {
+                                                // No valid query found, hide the list
+                                                show_file_list.set(false);
+                                            }
                                         }
                                     }
                                 }
@@ -494,16 +552,16 @@ pub fn EnhancedTextInput(
 
             // File list popup
             #(if *show_file_list.read() {
-                let files = file_list.read();
+                let results = search_results.read();
                 let selected_index = selected_file_index.get();
                 let max_display_files = 10;
-                let display_files: Vec<_> = files.iter().take(max_display_files).enumerate().collect();
+                let display_results: Vec<_> = results.iter().take(max_display_files).enumerate().collect();
 
                 Some(element! {
                     View(
                         key: "file-list",
                         width: width,
-                        height: min(files.len(), max_display_files) as u16,
+                        height: min(results.len(), max_display_files) as u16,
                         position: Position::Relative,
                     ) {
                         View(
@@ -513,7 +571,7 @@ pub fn EnhancedTextInput(
                             padding_left: 2,
                             padding_right: 2,
                         ) {
-                            #(display_files.iter().map(|(idx, file)| {
+                            #(display_results.iter().map(|(idx, result)| {
                                 let is_selected = *idx == selected_index;
                                 element! {
                                     View(
@@ -522,7 +580,7 @@ pub fn EnhancedTextInput(
                                         width: 100pct,
                                     ) {
                                         Text(
-                                            content: (*file).clone(),
+                                            content: result.display_name.clone(),
                                             color: if is_selected {
                                                 Color::Rgb { r: 100, g: 149, b: 237 }
                                             } else {
