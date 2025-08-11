@@ -1,16 +1,16 @@
 //! Formatting utilities for CLI output
 
-use trae_agent_core::output::{ToolExecutionInfo, ToolExecutionStatus};
 use std::path::Path;
+use trae_agent_core::output::{ToolExecutionInfo, ToolExecutionStatus};
 
 // ANSI color codes
-const RED_BG: &str = "\x1b[41m";    // Red background
-const GREEN_BG: &str = "\x1b[42m";  // Green background
-const GRAY: &str = "\x1b[90m";      // Gray text for line numbers
-const WHITE: &str = "\x1b[97m";     // White text for executing status
-const GREEN: &str = "\x1b[92m";     // Green text for success status
-const RED: &str = "\x1b[91m";       // Red text for error status
-const BLACK: &str = "\x1b[30m";     // Black text for better contrast on colored backgrounds
+const RED_BG: &str = "\x1b[41m"; // Red background
+const GREEN_BG: &str = "\x1b[42m"; // Green background
+const GRAY: &str = "\x1b[90m"; // Gray text for line numbers
+const WHITE: &str = "\x1b[97m"; // White text for executing status
+const GREEN: &str = "\x1b[92m"; // Green text for success status
+const RED: &str = "\x1b[91m"; // Red text for error status
+const BLACK: &str = "\x1b[30m"; // Black text for better contrast on colored backgrounds
 const RESET: &str = "\x1b[0m";
 
 /// Tool execution formatter
@@ -20,7 +20,7 @@ impl ToolFormatter {
     pub fn new() -> Self {
         Self
     }
-    
+
     /// Format tool execution status for CLI display
     pub fn format_tool_status(&self, tool_info: &ToolExecutionInfo) -> String {
         let (dot_color, dot_char) = match tool_info.status {
@@ -36,7 +36,10 @@ impl ToolFormatter {
         if command.is_empty() {
             format!("{}{}{} {}", dot_color, dot_char, RESET, display_name)
         } else {
-            format!("{}{}{} {}({})", dot_color, dot_char, RESET, display_name, command)
+            format!(
+                "{}{}{} {}({})",
+                dot_color, dot_char, RESET, display_name, command
+            )
         }
     }
 
@@ -50,8 +53,9 @@ impl ToolFormatter {
                     "Create".to_string()
                 } else if tool_info.parameters.contains_key("old_str") {
                     "Update".to_string()
-                } else if tool_info.parameters.contains_key("view_range") ||
-                         tool_info.parameters.get("command").and_then(|v| v.as_str()) == Some("view") {
+                } else if tool_info.parameters.contains_key("view_range")
+                    || tool_info.parameters.get("command").and_then(|v| v.as_str()) == Some("view")
+                {
                     "Read".to_string()
                 } else {
                     "Edit".to_string()
@@ -74,33 +78,32 @@ impl ToolFormatter {
             }
         }
     }
-    
+
     /// Extract the main command/parameter from tool info for display
     fn extract_tool_command(&self, tool_info: &ToolExecutionInfo) -> String {
         let command = match tool_info.tool_name.as_str() {
-            "bash" => {
-                tool_info.parameters
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            }
-            "str_replace_based_edit_tool" => {
-                tool_info.parameters
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|path| {
-                        Path::new(path)
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or(path)
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| "file".to_string())
-            }
+            "bash" => tool_info
+                .parameters
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "str_replace_based_edit_tool" => tool_info
+                .parameters
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|path| {
+                    Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(path)
+                        .to_string()
+                })
+                .unwrap_or_else(|| "file".to_string()),
             _ => {
                 // For other tools, try to find a reasonable display parameter
-                tool_info.parameters
+                tool_info
+                    .parameters
                     .get("path")
                     .or_else(|| tool_info.parameters.get("file"))
                     .or_else(|| tool_info.parameters.get("name"))
@@ -119,7 +122,7 @@ impl ToolFormatter {
             command
         }
     }
-    
+
     /// Format tool result content for display
     pub fn format_tool_result(&self, tool_info: &ToolExecutionInfo) -> Option<String> {
         let result = tool_info.result.as_ref()?;
@@ -150,8 +153,10 @@ impl ToolFormatter {
                     } else if tool_info.parameters.contains_key("old_str") {
                         // Update operation - no message needed, diff view will be shown
                         None
-                    } else if tool_info.parameters.contains_key("view_range") ||
-                             tool_info.parameters.get("command").and_then(|v| v.as_str()) == Some("view") {
+                    } else if tool_info.parameters.contains_key("view_range")
+                        || tool_info.parameters.get("command").and_then(|v| v.as_str())
+                            == Some("view")
+                    {
                         // Read operation - show line count
                         let line_count = result.content.lines().count();
                         Some(format!("  ⎿  Read {} lines", line_count))
@@ -161,9 +166,7 @@ impl ToolFormatter {
                     }
                 }
             }
-            "task_done" => {
-                Some(format!("  ⎿  {}", result.content))
-            }
+            "task_done" => Some(format!("  ⎿  {}", result.content)),
             "sequentialthinking" => {
                 // Thinking tool - no result message needed, thinking is shown separately
                 None
@@ -186,24 +189,22 @@ impl DiffFormatter {
     pub fn new() -> Self {
         Self
     }
-    
+
     /// Format edit tool result with diff view
     pub fn format_edit_result(&self, tool_info: &ToolExecutionInfo) -> Option<String> {
         let result = tool_info.result.as_ref()?;
-        
+
         if !result.success {
             return None;
         }
-        
-        let path = tool_info.parameters
-            .get("path")
-            .and_then(|v| v.as_str())?;
-        
+
+        let path = tool_info.parameters.get("path").and_then(|v| v.as_str())?;
+
         let file_name = Path::new(path)
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(path);
-        
+
         // Determine operation type and create appropriate diff
         if let Some(old_str) = tool_info.parameters.get("old_str").and_then(|v| v.as_str()) {
             if let Some(new_str) = tool_info.parameters.get("new_str").and_then(|v| v.as_str()) {
@@ -215,18 +216,27 @@ impl DiffFormatter {
         } else if let Some(new_str) = tool_info.parameters.get("new_str").and_then(|v| v.as_str()) {
             // insert operation
             Some(self.create_unified_diff_view(file_name, None, Some(new_str)))
-        } else if let Some(file_text) = tool_info.parameters.get("file_text").and_then(|v| v.as_str()) {
+        } else if let Some(file_text) = tool_info
+            .parameters
+            .get("file_text")
+            .and_then(|v| v.as_str())
+        {
             // create operation
             Some(self.create_unified_diff_view(file_name, None, Some(file_text)))
         } else {
             None
         }
     }
-    
+
     /// Create a unified diff view for all operations
-    fn create_unified_diff_view(&self, file_name: &str, old_content: Option<&str>, new_content: Option<&str>) -> String {
+    fn create_unified_diff_view(
+        &self,
+        file_name: &str,
+        old_content: Option<&str>,
+        new_content: Option<&str>,
+    ) -> String {
         let mut result = String::new();
-        
+
         result.push_str(&format!("╭{:─<120}╮\n", ""));
         result.push_str(&format!("│ {:<118} │\n", file_name));
         result.push_str(&format!("│{:<120}│\n", ""));
@@ -235,21 +245,32 @@ impl DiffFormatter {
         let new_lines: Vec<&str> = new_content.map(|s| s.lines().collect()).unwrap_or_default();
 
         let max_lines = old_lines.len().max(new_lines.len());
-        
+
         for i in 0..max_lines {
             let line_num = format!("{:>3}", i + 1);
-            
+
             if i < old_lines.len() && i < new_lines.len() {
                 if old_lines[i] != new_lines[i] {
                     // Changed line - show both old and new
-                    let old_line = self.format_line_with_background_and_prefix(old_lines[i], RED_BG, "-");
-                    let new_line = self.format_line_with_background_and_prefix(new_lines[i], GREEN_BG, "+");
-                    result.push_str(&format!("│   {}{}{} {} │\n", GRAY, line_num, RESET, old_line));
-                    result.push_str(&format!("│   {}{}{} {} │\n", GRAY, line_num, RESET, new_line));
+                    let old_line =
+                        self.format_line_with_background_and_prefix(old_lines[i], RED_BG, "-");
+                    let new_line =
+                        self.format_line_with_background_and_prefix(new_lines[i], GREEN_BG, "+");
+                    result.push_str(&format!(
+                        "│   {}{}{} {} │\n",
+                        GRAY, line_num, RESET, old_line
+                    ));
+                    result.push_str(&format!(
+                        "│   {}{}{} {} │\n",
+                        GRAY, line_num, RESET, new_line
+                    ));
                 } else {
                     // Unchanged line
                     let line = self.truncate_line(old_lines[i]);
-                    result.push_str(&format!("│   {}{}{}    {:<100} │\n", GRAY, line_num, RESET, line));
+                    result.push_str(&format!(
+                        "│   {}{}{}    {:<100} │\n",
+                        GRAY, line_num, RESET, line
+                    ));
                 }
             } else if i < old_lines.len() {
                 // Deleted line
@@ -263,23 +284,28 @@ impl DiffFormatter {
         }
 
         result.push_str(&format!("╰{:─<120}╯", ""));
-        
+
         result
     }
-    
+
     /// Format a line with background color including prefix symbol
-    fn format_line_with_background_and_prefix(&self, line: &str, bg_color: &str, prefix: &str) -> String {
+    fn format_line_with_background_and_prefix(
+        &self,
+        line: &str,
+        bg_color: &str,
+        prefix: &str,
+    ) -> String {
         let truncated = self.truncate_line(line);
         let content_with_prefix = format!("{} {}", prefix, truncated);
         // Use black text on colored background for better contrast
         format!("{}{}{:<100}{}", bg_color, BLACK, content_with_prefix, RESET)
     }
-    
+
     /// Truncate line if too long
     fn truncate_line(&self, line: &str) -> String {
-        if line.len() > 100 { 
+        if line.len() > 100 {
             format!("{}...", &line[..97])
-        } else { 
+        } else {
             line.to_string()
         }
     }

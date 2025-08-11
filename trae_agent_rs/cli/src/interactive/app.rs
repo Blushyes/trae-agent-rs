@@ -8,6 +8,19 @@ use tokio::sync::{broadcast, mpsc};
 use trae_agent_core::Config;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// Represents different types of content blocks for output formatting
+#[derive(Debug, Clone, PartialEq)]
+enum ContentBlock {
+    /// User input messages
+    UserInput,
+    /// Agent thinking, analysis, or response text
+    AgentText,
+    /// Tool execution status (e.g., "⏺ Read(filename)")
+    ToolStatus,
+    /// Tool execution results/output
+    ToolResult,
+}
+
 /// Easing options for token animation
 #[derive(Debug, Clone, Copy)]
 enum Easing {
@@ -42,11 +55,99 @@ fn get_terminal_width() -> usize {
     }
 }
 
-/// Overwrite previous lines in terminal output using ANSI escape sequences
+/// Identify the content block type based on content and role
+fn identify_content_block(content: &str, role: &str) -> ContentBlock {
+    if role == "user" {
+        return ContentBlock::UserInput;
+    }
+
+    // Check for tool status indicators
+    if content.contains("⏺") {
+        return ContentBlock::ToolStatus;
+    }
+
+    // Check for tool result indicators
+    if content.contains("⎿") {
+        return ContentBlock::ToolResult;
+    }
+
+    // Check for bash output patterns (file listings, command output, etc.)
+    let is_bash_output = content.starts_with("total ") || // ls -la output
+        content.contains("drwx") ||      // directory listing
+        content.contains("-rw-") ||      // file listing
+        content.lines().any(|line| line.trim().starts_with("total ")) ||
+        content.lines().any(|line| line.contains("drwx") || line.contains("-rw-"));
+
+    if is_bash_output {
+        return ContentBlock::ToolResult;
+    }
+
+    // Default to agent text for everything else
+    ContentBlock::AgentText
+}
+
+/// Check if content is bash output that should be displayed in gray
+fn is_bash_output_content(content: &str) -> bool {
+    !content.contains("⏺")
+        && !content.contains("⎿")
+        && (content.starts_with("total ")
+            || content.contains("drwx")
+            || content.contains("-rw-")
+            || content
+                .lines()
+                .any(|line| line.trim().starts_with("total "))
+            || content
+                .lines()
+                .any(|line| line.contains("drwx") || line.contains("-rw-")))
+}
+
+/// Format and output a content block with appropriate spacing
+fn output_content_block<T: OutputHandle>(
+    stdout: &T,
+    content: &str,
+    block_type: ContentBlock,
+    terminal_width: usize,
+    is_bash_output: bool,
+) -> usize {
+    let wrapped_lines = wrap_text(content, terminal_width);
+
+    // Output the content lines
+    match block_type {
+        ContentBlock::UserInput => {
+            for (i, line) in wrapped_lines.iter().enumerate() {
+                if i == 0 {
+                    stdout.println(format!("> {}", line));
+                } else {
+                    stdout.println(format!("  {}", line));
+                }
+            }
+        }
+        _ => {
+            for line in wrapped_lines.iter() {
+                if is_bash_output {
+                    // Apply gray color using ANSI escape codes
+                    let gray_line = format!("\x1b[90m{}\x1b[0m", line);
+                    stdout.println(gray_line);
+                } else {
+                    stdout.println(line);
+                }
+            }
+        }
+    }
+
+    // Add empty line after each block for proper spacing
+    stdout.println("");
+
+    // Return total lines including the empty line
+    wrapped_lines.len() + 1
+}
+
+/// Overwrite previous lines in terminal output using ANSI escape sequences with block-based formatting
 ///
 /// # Parameters
 /// - `stdout`: Output handler to write to
 /// - `content`: New content to display
+/// - `role`: Role of the message sender
 /// - `terminal_width`: Width for text wrapping
 /// - `previous_line_count`: Number of lines the previous message occupied
 ///
@@ -55,24 +156,92 @@ fn get_terminal_width() -> usize {
 fn overwrite_previous_lines<T: OutputHandle>(
     stdout: &T,
     content: &str,
+    role: &str,
     terminal_width: usize,
     previous_line_count: usize,
 ) -> usize {
+    let block_type = identify_content_block(content, role);
+    let is_bash_output = is_bash_output_content(content);
     let wrapped_lines = wrap_text(content, terminal_width);
-    let new_total_lines = wrapped_lines.len() + 1; // +1 for empty line
 
     // Move cursor up to overwrite the previous message and clear from cursor to end of screen
     for (i, line) in wrapped_lines.iter().enumerate() {
         if i == 0 {
             // For the first line, move up and clear from cursor to end of screen, then write new content
-            stdout.println(format!("\x1b[{}A\x1b[0J{}", previous_line_count, line));
+            let formatted_line = match block_type {
+                ContentBlock::UserInput => format!("> {}", line),
+                _ => {
+                    if is_bash_output {
+                        format!("\x1b[90m{}\x1b[0m", line)
+                    } else {
+                        line.to_string()
+                    }
+                }
+            };
+            stdout.println(format!(
+                "\x1b[{}A\x1b[0J{}",
+                previous_line_count, formatted_line
+            ));
         } else {
-            stdout.println(line);
+            let formatted_line = match block_type {
+                ContentBlock::UserInput => format!("  {}", line),
+                _ => {
+                    if is_bash_output {
+                        format!("\x1b[90m{}\x1b[0m", line)
+                    } else {
+                        line.to_string()
+                    }
+                }
+            };
+            stdout.println(formatted_line);
         }
     }
-    stdout.println(""); // Empty line for spacing
 
-    new_total_lines
+    // Add empty line after each block for proper spacing
+    stdout.println("");
+
+    // Return total lines including the empty line
+    wrapped_lines.len() + 1
+}
+
+/// Update status line at a specific position using ANSI escape sequences
+///
+/// # Parameters
+/// - `stdout`: Output handler to write to
+/// - `status_content`: Status line content to display
+/// - `terminal_width`: Width for text wrapping
+/// - `lines_from_bottom`: Number of lines from the bottom of the terminal
+///
+/// # Returns
+/// The number of lines the status content occupies
+fn update_status_line_at_position<T: OutputHandle>(
+    stdout: &T,
+    status_content: &str,
+    terminal_width: usize,
+    lines_from_bottom: usize,
+) -> usize {
+    let wrapped_lines = wrap_text(status_content, terminal_width);
+    let status_line_count = wrapped_lines.len();
+
+    // Save cursor position, move to status line position, clear and write, then restore
+    for (i, line) in wrapped_lines.iter().enumerate() {
+        if i == 0 {
+            // Move to the status line position and clear the line
+            stdout.println(format!(
+                "\x1b[s\x1b[{}A\x1b[2K\r{}\x1b[u",
+                lines_from_bottom, line
+            ));
+        } else {
+            // For multi-line status, continue on next lines
+            stdout.println(format!(
+                "\x1b[s\x1b[{}A\x1b[2K\r{}\x1b[u",
+                lines_from_bottom - i,
+                line
+            ));
+        }
+    }
+
+    status_line_count
 }
 
 /// Trait to abstract over different output handles (StdoutHandle, StderrHandle)
@@ -252,35 +421,55 @@ fn generate_message_id() -> String {
     format!("msg_{}", timestamp)
 }
 
-/// Convert AppMessage to UI message tuple (role, content, message_id)
-fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String, Option<String>)> {
+/// Convert AppMessage to UI message tuple (role, content, message_id, is_tool_result)
+fn app_message_to_ui_message(
+    app_message: AppMessage,
+) -> Option<(String, String, Option<String>, bool)> {
     match app_message {
-        AppMessage::SystemMessage(msg) => {
-            Some(("system".to_string(), msg, Some(generate_message_id())))
-        }
+        AppMessage::SystemMessage(msg) => Some((
+            "system".to_string(),
+            msg,
+            Some(generate_message_id()),
+            false,
+        )),
         AppMessage::UserMessage(msg) => {
-            Some(("user".to_string(), msg, Some(generate_message_id())))
+            Some(("user".to_string(), msg, Some(generate_message_id()), false))
         }
         AppMessage::InteractiveUpdate(interactive_msg) => match interactive_msg {
-            InteractiveMessage::AgentThinking(thinking) => {
-                Some(("agent".to_string(), thinking, Some(generate_message_id())))
-            }
+            InteractiveMessage::AgentThinking(thinking) => Some((
+                "agent".to_string(),
+                thinking,
+                Some(generate_message_id()),
+                false,
+            )),
             InteractiveMessage::ToolStatus {
                 execution_id,
                 status,
-            } => Some(("system".to_string(), status, Some(execution_id))),
+            } => Some(("system".to_string(), status, Some(execution_id), false)),
             InteractiveMessage::ToolResult(result) => {
-                Some(("agent".to_string(), result, Some(generate_message_id())))
+                // Use block system to determine if this is bash output
+                let is_bash_output_content = is_bash_output_content(&result);
+
+                Some((
+                    "agent".to_string(),
+                    result,
+                    Some(generate_message_id()),
+                    is_bash_output_content,
+                ))
             }
-            InteractiveMessage::SystemMessage(msg) => {
-                Some(("system".to_string(), msg, Some(generate_message_id())))
-            }
+            InteractiveMessage::SystemMessage(msg) => Some((
+                "system".to_string(),
+                msg,
+                Some(generate_message_id()),
+                false,
+            )),
             InteractiveMessage::TaskCompleted { success, summary } => {
                 let status_icon = if success { "✅" } else { "❌" };
                 Some((
                     "system".to_string(),
                     format!("{} Task completed: {}", status_icon, summary),
                     Some(generate_message_id()),
+                    false,
                 ))
             }
             InteractiveMessage::ExecutionStats {
@@ -292,7 +481,12 @@ fn app_message_to_ui_message(app_message: AppMessage) -> Option<(String, String,
                 if let Some(token_info) = tokens {
                     stats.push_str(&format!("\n{}", token_info));
                 }
-                Some(("system".to_string(), stats, Some(generate_message_id())))
+                Some((
+                    "system".to_string(),
+                    stats,
+                    Some(generate_message_id()),
+                    false,
+                ))
             }
         },
         AppMessage::AgentTaskStarted { .. } => None,
@@ -731,7 +925,9 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     hooks.use_future(async move {
         let mut rx = ui_sender_messages.subscribe();
         while let Ok(app_message) = rx.recv().await {
-            if let Some((role, content, message_id)) = app_message_to_ui_message(app_message) {
+            if let Some((role, content, message_id, is_bash_output)) =
+                app_message_to_ui_message(app_message)
+            {
                 let mut current = messages_clone.read().clone();
                 let mut line_counts = message_line_counts_clone.read().clone();
                 let is_new_message = if let Some(msg_id) = &message_id {
@@ -750,27 +946,18 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     true // New message
                 };
 
-                // Output messages to stdout
+                // Output messages to stdout using block-based formatting
                 // For new messages, output normally
                 // For updated messages (like tool status changes), we need to handle the replacement
                 if is_new_message {
-                    let wrapped_lines = wrap_text(&content, terminal_width);
-                    let total_lines = wrapped_lines.len() + 1; // +1 for empty line
-
-                    if role == "user" {
-                        for (i, line) in wrapped_lines.iter().enumerate() {
-                            if i == 0 {
-                                stdout_messages.println(format!("> {}", line));
-                            } else {
-                                stdout_messages.println(format!("  {}", line));
-                            }
-                        }
-                    } else {
-                        for line in wrapped_lines.iter() {
-                            stdout_messages.println(line);
-                        }
-                    }
-                    stdout_messages.println(""); // Empty line for spacing
+                    let block_type = identify_content_block(&content, &role);
+                    let total_lines = output_content_block(
+                        &stdout_messages,
+                        &content,
+                        block_type,
+                        terminal_width,
+                        is_bash_output,
+                    );
 
                     // Store line count for this message
                     if let Some(msg_id) = &message_id {
@@ -791,6 +978,7 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                     let new_total_lines = overwrite_previous_lines(
                         &stdout_messages,
                         &content,
+                        &role,
                         terminal_width,
                         previous_lines,
                     );
