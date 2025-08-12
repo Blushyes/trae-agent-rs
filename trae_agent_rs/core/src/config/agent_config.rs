@@ -35,6 +35,11 @@ pub struct AgentConfig {
     /// Output mode for the agent (debug or normal)
     #[serde(default)]
     pub output_mode: OutputMode,
+
+    /// Custom system prompt for the agent (optional)
+    /// If not provided, the default system prompt will be used
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -50,6 +55,7 @@ impl Default for AgentConfig {
                 "task_done".to_string(),
             ],
             output_mode: OutputMode::default(),
+            system_prompt: None,
         }
     }
 }

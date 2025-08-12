@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::{AgentConfig, ModelConfig, ProviderConfig, ConfigLoader, ApiProvider, ApiProviderConfig};
+use super::{
+    AgentConfig, ApiProvider, ApiProviderConfig, ConfigLoader, ModelConfig, ProviderConfig,
+};
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,10 +22,7 @@ pub struct Config {
     pub models: HashMap<String, ModelConfig>,
 }
 
-
-
 impl Config {
-
     /// Validate the configuration
     pub fn validate(&self) -> Result<()> {
         // Validate that all model references exist
@@ -32,17 +31,22 @@ impl Config {
                 return Err(ConfigError::InvalidValue {
                     field: format!("agents.{}.model", agent_name),
                     value: agent_config.model.clone(),
-                }.into());
+                }
+                .into());
             }
         }
 
         // Validate that all model provider references exist
         for (model_name, model_config) in &self.models {
-            if !self.model_providers.contains_key(&model_config.model_provider) {
+            if !self
+                .model_providers
+                .contains_key(&model_config.model_provider)
+            {
                 return Err(ConfigError::InvalidValue {
                     field: format!("models.{}.model_provider", model_name),
                     value: model_config.model_provider.clone(),
-                }.into());
+                }
+                .into());
             }
         }
 
@@ -79,7 +83,10 @@ impl Config {
     }
 
     /// Create configuration from a single API provider config
-    pub fn from_api_provider_config(provider: ApiProvider, api_config: ApiProviderConfig) -> Result<Self> {
+    pub fn from_api_provider_config(
+        provider: ApiProvider,
+        api_config: ApiProviderConfig,
+    ) -> Result<Self> {
         let mut agents = HashMap::new();
         let mut models = HashMap::new();
         let mut model_providers = HashMap::new();
@@ -97,7 +104,9 @@ impl Config {
         let model_name = format!("{}_model", provider.as_str());
         let model_config = ModelConfig {
             model_provider: provider.to_string(),
-            model: api_config.model.unwrap_or_else(|| Self::default_model_for_provider(&provider)),
+            model: api_config
+                .model
+                .unwrap_or_else(|| Self::default_model_for_provider(&provider)),
             max_tokens: Some(4096),
             temperature: Some(0.5),
             top_p: Some(1.0),
@@ -121,6 +130,7 @@ impl Config {
                 "task_done".to_string(),
             ],
             output_mode: crate::config::agent_config::OutputMode::Normal,
+            system_prompt: None,
         };
 
         agents.insert("trae_agent".to_string(), agent_config);
@@ -189,6 +199,7 @@ impl Default for Config {
                     "task_done".to_string(),
                 ],
                 output_mode: crate::config::agent_config::OutputMode::Normal,
+                system_prompt: None,
             },
         );
 
@@ -199,7 +210,6 @@ impl Default for Config {
         }
     }
 }
-
 
 #[cfg(test)]
 mod config_tests {

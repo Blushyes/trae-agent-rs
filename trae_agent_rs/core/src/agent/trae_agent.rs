@@ -135,12 +135,37 @@ impl TraeAgent {
         Self::new_with_output(agent_config, config, Box::new(NullOutput)).await
     }
 
+    /// Set a custom system prompt for the agent
+    /// This will override any system prompt set in the configuration
+    pub fn set_system_prompt(&mut self, system_prompt: Option<String>) {
+        self.config.system_prompt = system_prompt;
+    }
+
+    /// Get the current system prompt from configuration
+    pub fn get_configured_system_prompt(&self) -> Option<&String> {
+        self.config.system_prompt.as_ref()
+    }
+
     /// Get the system prompt for the agent with project context
     fn get_system_prompt(&self, project_path: &Path) -> String {
-        // Use the system prompt with environment context from prompt.rs
+        // Use custom system prompt if provided, otherwise use default
+        let base_prompt = if let Some(custom_prompt) = &self.config.system_prompt {
+            // If custom prompt is provided, use it as-is with minimal generic context
+            let system_context = crate::agent::prompt::build_system_context();
+
+            format!(
+                "{}\n\n\
+                 [System Context]:\n{}",
+                custom_prompt, system_context
+            )
+        } else {
+            // Use default system prompt with full environment context from prompt.rs
+            build_system_prompt_with_context(project_path)
+        };
+
         format!(
             "{}\n\nAvailable tools: {}",
-            build_system_prompt_with_context(project_path),
+            base_prompt,
             self.tool_executor.list_tools().join(", ")
         )
     }
@@ -729,5 +754,140 @@ impl TraeAgent {
                 duration_ms,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AgentConfig;
+    use crate::error::Result;
+    use crate::llm::{
+        ChatOptions, LlmClient, LlmMessage, LlmResponse, MessageContent, MessageRole,
+        ToolDefinition,
+    };
+    use async_trait::async_trait;
+
+    // Mock LLM client for testing
+    struct MockLlmClient;
+
+    impl MockLlmClient {
+        fn new() -> Self {
+            Self
+        }
+    }
+
+    #[async_trait]
+    impl LlmClient for MockLlmClient {
+        async fn chat_completion(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: Option<Vec<ToolDefinition>>,
+            _options: Option<ChatOptions>,
+        ) -> Result<LlmResponse> {
+            Ok(LlmResponse {
+                message: LlmMessage {
+                    role: MessageRole::Assistant,
+                    content: MessageContent::Text("Mock response".to_string()),
+                    metadata: None,
+                },
+                usage: None,
+                model: "mock-model".to_string(),
+                finish_reason: None,
+                metadata: None,
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "mock-model"
+        }
+
+        fn provider_name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_configuration() {
+        // Test AgentConfig with custom system prompt
+        let mut agent_config = AgentConfig::default();
+        agent_config.system_prompt = Some("Custom system prompt for testing".to_string());
+
+        assert_eq!(
+            agent_config.system_prompt,
+            Some("Custom system prompt for testing".to_string())
+        );
+
+        // Test default AgentConfig has no system prompt
+        let default_config = AgentConfig::default();
+        assert_eq!(default_config.system_prompt, None);
+    }
+
+    #[test]
+    fn test_system_prompt_serialization() {
+        // Test that AgentConfig with system_prompt can be serialized/deserialized
+        let mut config = AgentConfig::default();
+        config.system_prompt = Some("Custom prompt".to_string());
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: AgentConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.system_prompt,
+            Some("Custom prompt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_default_none() {
+        // Test that default AgentConfig has None for system_prompt
+        let config = AgentConfig::default();
+        assert_eq!(config.system_prompt, None);
+    }
+
+    #[test]
+    fn test_custom_system_prompt_excludes_project_context() {
+        // Test that custom system prompt doesn't include project-specific information
+        use crate::output::events::NullOutput;
+        use crate::tools::ToolRegistry;
+        use std::path::PathBuf;
+
+        // Create a mock agent with custom system prompt
+        let mut agent_config = AgentConfig::default();
+        agent_config.system_prompt = Some("You are a general purpose AI assistant.".to_string());
+
+        // Create minimal components for testing
+        let tool_registry = ToolRegistry::default();
+        let tool_executor = tool_registry.create_executor(&agent_config.tools);
+
+        let agent = TraeAgent {
+            config: agent_config,
+            llm_client: std::sync::Arc::new(MockLlmClient::new()),
+            tool_executor,
+            trajectory_recorder: None,
+            conversation_history: Vec::new(),
+            output: Box::new(NullOutput),
+            current_task_displayed: false,
+            execution_context: None,
+        };
+
+        let project_path = PathBuf::from("/some/project/path");
+        let system_prompt = agent.get_system_prompt(&project_path);
+
+        // Should contain the custom prompt
+        assert!(system_prompt.contains("You are a general purpose AI assistant."));
+
+        // Should contain system context (OS, architecture, etc.)
+        assert!(system_prompt.contains("System Information:"));
+        assert!(system_prompt.contains("Operating System:"));
+
+        // Should contain available tools
+        assert!(system_prompt.contains("Available tools:"));
+
+        // Should NOT contain project-specific information
+        assert!(!system_prompt.contains("Project root path"));
+        assert!(!system_prompt.contains("/some/project/path"));
+        assert!(!system_prompt.contains("IMPORTANT: When using tools that require file paths"));
+        assert!(!system_prompt.contains("You are an expert AI software engineering agent"));
     }
 }
