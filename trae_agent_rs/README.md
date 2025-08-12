@@ -1,5 +1,7 @@
 # Trae Agent Rust
 
+**Language**: [English](README.md) | [中文](README_zh.md)
+
 A high-performance Rust implementation of [Trae Agent](https://github.com/bytedance/trae-agent) - an LLM-based agent for software engineering tasks.
 
 ![demo](./images/demo.gif)
