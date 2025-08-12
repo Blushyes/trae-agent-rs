@@ -5,10 +5,10 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Trae Agent Contributors"]
+authors = ["Blushyes"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/your-org/trae-agent-rs"
-homepage = "https://github.com/your-org/trae-agent-rs"
+repository = "https://github.com/blushyes/trae-agent-rs"
+homepage = "https://github.com/Blushyes/trae-agent-rs/tree/main/trae_agent_rs"
 description = "A Rust implementation of Trae Agent - LLM-based agent for software engineering tasks"
 keywords = ["ai", "agent", "llm", "cli", "automation"]
 categories = ["command-line-utilities", "development-tools"]

@@ -35,7 +35,7 @@ dirs = { workspace = true }
 shellexpand = { workspace = true }
 
 # Local dependencies
-trae-agent-core = { path = "../core" }
+trae-agent-rs-core = { path = "../core" }
 
 # CLI-specific dependencies
 async-trait = "0.1"

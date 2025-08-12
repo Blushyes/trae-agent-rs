@@ -1,5 +1,5 @@
 [package]
-name = "trae-agent-core"
+name = "trae-agent-rs-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
