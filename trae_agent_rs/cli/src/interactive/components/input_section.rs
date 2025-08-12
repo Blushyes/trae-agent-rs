@@ -9,6 +9,7 @@ use crate::interactive::file_search::{
 use crate::interactive::file_search::{
     DefaultFileSearchProvider, FileSearchProvider, FileSearchResult,
 };
+use crate::interactive::input_history::InputHistory;
 use crate::interactive::message_handler::AppMessage;
 use iocraft::prelude::*;
 use std::cmp::min;
@@ -581,6 +582,14 @@ pub fn EnhancedTextInput(
                                 on_cursor_position_change((line, col));
                             }
                         }
+                        KeyCode::Up => {
+                            // History navigation will be handled in InputSection
+                            // For now, just handle normal text navigation
+                        }
+                        KeyCode::Down => {
+                            // History navigation will be handled in InputSection
+                            // For now, just handle normal text navigation
+                        }
                         _ => {}
                     }
 
@@ -856,6 +865,10 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
     let current_user_input = hooks.use_state(|| String::new());
     let cursor_position = hooks.use_state(|| (1usize, 1usize)); // (line, column)
 
+    // Input history state
+    let input_history = hooks.use_state(|| InputHistory::new());
+    let history_initialized = hooks.use_state(|| false);
+
     // Initialize cursor position when input value changes
     let mut cursor_position_init = cursor_position.clone();
     let input_value_for_init = input_value.clone();
@@ -863,6 +876,45 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
         let current_input = input_value_for_init.read().clone();
         let (line, col) = calculate_cursor_position(&current_input, current_input.len());
         cursor_position_init.set((line, col));
+    });
+
+    // Load history from file on first render
+    hooks.use_future({
+        let mut input_history = input_history.clone();
+        let mut history_initialized = history_initialized.clone();
+        async move {
+            if !*history_initialized.read() {
+                // Clone the history to avoid borrowing issues
+                let mut history_clone = input_history.read().clone();
+                let null_output = trae_agent_core::output::NullOutput;
+                if let Ok(()) = history_clone.load(&null_output).await {
+                    // Ensure navigation is properly reset after loading
+                    history_clone.reset_navigation();
+                    // Update the state with the loaded history
+                    input_history.set(history_clone);
+                }
+                history_initialized.set(true);
+            }
+        }
+    });
+
+    // Periodic save mechanism (every 5 seconds if needed)
+    hooks.use_future({
+        let mut input_history = input_history.clone();
+        async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                // Check if history needs saving
+                let mut history_clone = input_history.read().clone();
+                if history_clone.needs_save() {
+                    let null_output = trae_agent_core::output::NullOutput;
+                    if let Ok(()) = history_clone.save_if_needed(&null_output).await {
+                        input_history.set(history_clone);
+                    }
+                }
+            }
+        }
     });
 
     // Subscribe to UI events to track task status
@@ -893,11 +945,14 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
     let project_path = context.project_path.clone();
     let ui_sender = context.ui_sender.clone();
 
-    // Handle ESC key for task interruption
+    // Handle keyboard events for task interruption and history navigation
     hooks.use_terminal_events({
         let ui_sender = ui_sender.clone();
         let is_task_running = is_task_running.clone();
         let current_user_input = current_user_input.clone();
+        let mut input_value = input_value.clone();
+        let mut cursor_position = cursor_position.clone();
+        let mut input_history = input_history.clone();
         move |event| {
             match event {
                 TerminalEvent::Key(KeyEvent { code, kind, .. })
@@ -910,6 +965,27 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                                 let user_input = current_user_input.read().clone();
                                 let _ = ui_sender
                                     .send(AppMessage::AgentExecutionInterrupted { user_input });
+                            }
+                        }
+                        KeyCode::Up => {
+                            // Navigate to previous history entry
+                            if !*is_task_running.read() {
+                                let current_input = input_value.read().clone();
+                                if let Some(history_text) =
+                                    input_history.write().navigate_previous(&current_input)
+                                {
+                                    input_value.set(history_text.clone());
+                                    cursor_position.set((1, history_text.len() + 1));
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            // Navigate to next history entry
+                            if !*is_task_running.read() {
+                                if let Some(history_text) = input_history.write().navigate_next() {
+                                    input_value.set(history_text.clone());
+                                    cursor_position.set((1, history_text.len() + 1));
+                                }
                             }
                         }
                         _ => {}
@@ -953,6 +1029,7 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                 on_submit: {
                     let mut input_value = input_value.clone();
                     let mut cursor_position = cursor_position.clone();
+                    let mut input_history = input_history.clone();
                     let ui_sender = ui_sender.clone();
                     let config = config.clone();
                     let project_path = project_path.clone();
@@ -960,6 +1037,14 @@ pub fn InputSection(mut hooks: Hooks, props: &InputSectionProps) -> impl Into<An
                         if input.trim().is_empty() {
                             return;
                         }
+
+                        // Add to history before clearing input (fast, no I/O)
+                        let input_for_history = input.clone();
+                        let mut history_clone = input_history.read().clone();
+
+                        // Add entry using fast method (no file I/O)
+                        history_clone.add_entry(input_for_history);
+                        input_history.set(history_clone);
 
                         // Clear input immediately and reset cursor position
                         input_value.set(String::new());

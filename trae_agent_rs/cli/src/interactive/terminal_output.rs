@@ -74,7 +74,6 @@ pub fn output_content_block<T: OutputHandle>(
 }
 
 /// Overwrite previous lines in terminal output using ANSI escape sequences with block-based formatting
-///
 /// # Parameters
 /// - `stdout`: Output handler to write to
 /// - `content`: New content to display
