@@ -5,7 +5,7 @@
 //! 2. Through AgentConfig directly
 //! 3. Dynamically at runtime
 
-use trae_agent_core::{
+use trae_agent_rs_core::{
     agent::TraeAgent,
     config::{agent_config::OutputMode, AgentConfig, Config},
     output::events::NullOutput,
