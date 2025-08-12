@@ -8,7 +8,7 @@ A high-performance Rust implementation of [Trae Agent](https://github.com/byteda
 
 ## 🚀 Project Status
 
-This is a **production-ready** Rust implementation that provides a complete, feature-rich agent system with advanced UI and tool capabilities. Built as a high-performance port of the original [Trae Agent](https://github.com/bytedance/trae-agent) Python implementation, this version maintains full compatibility with the tool specifications while adding Rust-specific performance optimizations and enhanced UI features.
+This is a simple AI Coding Agent with advanced UI and tool capabilities. Built as a high-performance port of the original [Trae Agent](https://github.com/bytedance/trae-agent) Python implementation, this version maintains full compatibility with the tool specifications while adding Rust-specific performance optimizations and enhanced UI features.
 
 **Current Status:**
 
@@ -18,6 +18,9 @@ This is a **production-ready** Rust implementation that provides a complete, fea
 - ✅ **CLI Interface**: Full-featured command-line interface with multiple execution modes
 - ✅ **Interactive Mode**: Rich terminal UI powered by iocraft with real-time updates
 - ✅ **LLM Integration**: Complete API integration for Anthropic, OpenAI, and Google
+  - ✅ **OpenAI Integration**: Complete OpenAI API integration
+  - ⏳ **Anthropic Integration**: Coming soon
+  - ⏳ **Google Integration**: Coming soon
 - ✅ **Trajectory Recording**: Detailed execution logging and analysis
 - ✅ **Patch Generation**: Automated code change tracking and diff generation
 - ✅ **File Search System**: High-performance fuzzy file search with Git integration
@@ -31,48 +34,6 @@ This is a **production-ready** Rust implementation that provides a complete, fea
 - 🔧 **MCP Integration**: Model Context Protocol support for external tool providers
 - 📊 **Real-time Status**: Dynamic status line with progress tracking and token usage
 - 🎯 **Context-Aware**: Project-aware agent with intelligent path resolution
-
-## ✨ Features
-
-### 🤖 AI-Powered Agent
-
-- **Intelligent Reasoning**: Advanced agent logic with multi-step task execution
-- **Context Awareness**: Project-aware agent with intelligent path resolution
-- **Tool Integration**: Seamless integration with 7 specialized tools
-
-### 🛠️ Comprehensive Tool System
-
-All tools maintain full compatibility with the original [Trae Agent](https://github.com/bytedance/trae-agent) specifications:
-
-- **`bash`**: Execute shell commands with persistent session state
-- **`str_replace_based_edit_tool`**: Advanced file editing with precise string replacement
-- **`json_edit_tool`**: Specialized JSON file manipulation and validation
-- **`sequentialthinking`**: Structured reasoning and planning capabilities
-- **`task_done`**: Task completion tracking and validation
-- **`ckg`**: Code Knowledge Graph for analyzing code structure across multiple languages
-- **`mcp`**: Model Context Protocol integration for external tool providers
-
-### 🎨 Rich Terminal Interface
-
-- **iocraft-Powered UI**: Beautiful, responsive terminal interface with real-time updates
-- **File Search**: High-performance fuzzy search with `@path/to/file` syntax
-- **Input History**: Persistent command history with keyboard navigation (↑/↓)
-- **Dynamic Status**: Real-time progress tracking with token usage and timing
-- **Animations**: Smooth UI transitions and loading indicators
-
-### ⚡ Performance & Reliability
-
-- **Rust Performance**: Native speed and memory safety
-- **Async Architecture**: Non-blocking operations for responsive UI
-- **Error Handling**: Comprehensive error recovery and user feedback
-- **Resource Management**: Efficient memory and CPU usage
-
-### 🔧 Advanced Configuration
-
-- **Multiple LLM Providers**: Anthropic Claude, OpenAI GPT, Google Gemini
-- **Flexible Auth**: JSON config files or environment variables
-- **Model Selection**: Support for latest models with custom parameters
-- **Provider Fallback**: Automatic failover between configured providers
 
 ## 🏗️ Architecture
 
@@ -109,7 +70,7 @@ The project follows a clean, modular architecture with clear separation of conce
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/trae-agent-rs
-cd trae-agent-rs/trae_agent_rs
+cd trae-agent-rs
 
 # Build the project (optimized)
 cargo build --release
@@ -173,19 +134,26 @@ export GOOGLE_MODEL="gemini-1.5-pro"
 
 ### 🎯 Usage
 
+#### Installation
+
+```bash
+cargo install --git https://github.com/Blushyes/trae-agent-rs --bin trae-rs
+trae-rs
+```
+
 #### Interactive Mode (Recommended)
 
 The interactive mode provides the best experience with real-time UI and file search:
 
 ```bash
 # Start interactive mode with rich UI
-trae interactive
+trae-rs interactive
 
 # Or simply (defaults to interactive)
-trae
+trae-rs
 
 # With debug output
-trae interactive --debug
+trae-rs interactive --debug
 ```
 
 **Interactive Features:**
@@ -201,29 +169,29 @@ For automated workflows and CI/CD integration:
 
 ```bash
 # Execute a single task
-trae run "Fix the bug in main.rs"
+trae-rs run "Fix the bug in main.rs"
 
 # With specific provider and model
-trae run "Create a hello world program" --provider anthropic --model claude-3-5-sonnet-20241022
+trae-rs run "Create a hello world program" --provider anthropic --model claude-3-5-sonnet-20241022
 
 # With trajectory recording for analysis
-trae run "Optimize the database queries" --trajectory-file analysis.json
+trae-rs run "Optimize the database queries" --trajectory-file analysis.json
 
 # Generate patch file for code changes
-trae run "Fix the authentication bug" --must-patch --patch-path fix.patch
+trae-rs run "Fix the authentication bug" --must-patch --patch-path fix.patch
 
 # Specify working directory
-trae run "Add unit tests" --working-dir /path/to/project
+trae-rs run "Add unit tests" --working-dir /path/to/project
 ```
 
 #### Tool Management
 
 ```bash
 # List all available tools
-trae tools
+trae-rs tools
 
 # Test basic functionality
-trae test
+trae-rs test
 ```
 
 ## 🛠️ Development
