@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use std::path::PathBuf;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Execute a single task
 pub async fn run_command(
@@ -20,19 +20,26 @@ pub async fn run_command(
 ) -> Result<()> {
     info!("Executing task: {}", task);
 
-    use trae_agent_core::{ Config, trajectory::TrajectoryRecorder, agent::TraeAgent };
-    use crate::output::cli_handler::{CliOutputHandler, CliOutputConfig};
+    use crate::output::cli_handler::{CliOutputConfig, CliOutputHandler};
+    use trae_agent_rs_core::{agent::TraeAgent, trajectory::TrajectoryRecorder, Config};
 
     // Output is now handled by the CLI output handler
 
     // Load configuration using API-based system
     let _config = match Config::from_api_configs(&config_dir).await {
         Ok(config) => {
-            debug!("📋 Loaded API-based configuration from: {}", config_dir.display());
+            debug!(
+                "📋 Loaded API-based configuration from: {}",
+                config_dir.display()
+            );
             config
         }
         Err(e) => {
-            debug!("⚠️  Failed to load configuration from {}: {}", config_dir.display(), e);
+            debug!(
+                "⚠️  Failed to load configuration from {}: {}",
+                config_dir.display(),
+                e
+            );
             debug!("📋 Using default configuration");
             Config::default()
         }
@@ -51,7 +58,11 @@ pub async fn run_command(
     debug!("🔢 Max steps: {}", max_steps);
 
     // Initialize agent with proper configuration
-    let agent_config = _config.agents.get("trae_agent").cloned().unwrap_or_default();
+    let agent_config = _config
+        .agents
+        .get("trae_agent")
+        .cloned()
+        .unwrap_or_default();
 
     // Create CLI output handler
     let cli_config = CliOutputConfig {
@@ -59,13 +70,14 @@ pub async fn run_command(
     };
     let cli_output = Box::new(CliOutputHandler::new(cli_config));
 
-    let mut agent = TraeAgent::new_with_output(agent_config.clone(), _config.clone(), cli_output).await?;
+    let mut agent =
+        TraeAgent::new_with_output(agent_config.clone(), _config.clone(), cli_output).await?;
 
     // Initialize trajectory recorder
     let trajectory = TrajectoryRecorder::new();
-    let task_entry = trae_agent_core::trajectory::TrajectoryEntry::task_start(
+    let task_entry = trae_agent_rs_core::trajectory::TrajectoryEntry::task_start(
         task.clone(),
-        serde_json::to_value(&agent_config).unwrap_or_default()
+        serde_json::to_value(&agent_config).unwrap_or_default(),
     );
     trajectory.record(task_entry).await?;
 
@@ -77,20 +89,23 @@ pub async fn run_command(
     debug!("📋 System prompt preview: TraeAgent system prompt loaded...");
 
     // Get current working directory
-    let current_dir = working_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let current_dir = working_dir
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let project_path = current_dir.canonicalize().unwrap_or(current_dir);
 
     debug!("📁 Project path: {}", project_path.display());
 
     // Execute the task using the real agent
 
-    let _execution_result = agent.execute_task_with_context(&task, &project_path).await?;
+    let _execution_result = agent
+        .execute_task_with_context(&task, &project_path)
+        .await?;
 
     if must_patch {
         info!("📄 Creating patch file: {}", patch_path.display());
         std::fs::write(
             &patch_path,
-            "# Placeholder patch file\n# Changes would be recorded here\n"
+            "# Placeholder patch file\n# Changes would be recorded here\n",
         )?;
     }
 

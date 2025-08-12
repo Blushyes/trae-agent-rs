@@ -8,7 +8,7 @@ use crate::output::interactive_handler::{InteractiveMessage, InteractiveOutputCo
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::{broadcast, mpsc};
-use trae_agent_core::Config;
+use trae_agent_rs_core::Config;
 
 /// Custom output handler that forwards events and tracks tokens
 pub struct TokenTrackingOutputHandler {
@@ -33,27 +33,27 @@ impl TokenTrackingOutputHandler {
 }
 
 #[async_trait::async_trait]
-impl trae_agent_core::output::AgentOutput for TokenTrackingOutputHandler {
+impl trae_agent_rs_core::output::AgentOutput for TokenTrackingOutputHandler {
     async fn emit_event(
         &self,
-        event: trae_agent_core::output::AgentEvent,
+        event: trae_agent_rs_core::output::AgentEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check for token updates and status updates in various events
         match &event {
-            trae_agent_core::output::AgentEvent::ExecutionCompleted { context, .. } => {
+            trae_agent_rs_core::output::AgentEvent::ExecutionCompleted { context, .. } => {
                 if context.token_usage.total_tokens > 0 {
                     let _ = self.ui_sender.send(AppMessage::TokenUpdate {
                         tokens: context.token_usage.total_tokens,
                     });
                 }
             }
-            trae_agent_core::output::AgentEvent::TokenUsageUpdated { token_usage } => {
+            trae_agent_rs_core::output::AgentEvent::TokenUsageUpdated { token_usage } => {
                 // Send immediate token update for smooth animation
                 let _ = self.ui_sender.send(AppMessage::TokenUpdate {
                     tokens: token_usage.total_tokens,
                 });
             }
-            trae_agent_core::output::AgentEvent::StatusUpdate { status, .. } => {
+            trae_agent_rs_core::output::AgentEvent::StatusUpdate { status, .. } => {
                 // Send status update to UI
                 let _ = self.ui_sender.send(AppMessage::AgentTaskStarted {
                     operation: status.clone(),
@@ -85,7 +85,7 @@ pub async fn execute_agent_task(
     // Create a receiver to listen for interruption signals
     let mut interrupt_receiver = ui_sender.subscribe();
     use crate::tools::StatusReportToolFactory;
-    use trae_agent_core::tools::ToolRegistry;
+    use trae_agent_rs_core::tools::ToolRegistry;
 
     // Get agent configuration
     let mut agent_config = config.agents.get("trae_agent").cloned().unwrap_or_default();
@@ -127,7 +127,7 @@ pub async fn execute_agent_task(
     let modified_config = config.clone();
 
     // Create and execute agent task
-    let mut agent = trae_agent_core::agent::TraeAgent::new_with_output_and_registry(
+    let mut agent = trae_agent_rs_core::agent::TraeAgent::new_with_output_and_registry(
         agent_config,
         modified_config,
         token_tracking_output,
@@ -169,7 +169,7 @@ pub async fn execute_agent_task(
 mod tests {
     use super::*;
     use tokio::sync::broadcast;
-    use trae_agent_core::output::AgentOutput;
+    use trae_agent_rs_core::output::AgentOutput;
 
     #[test]
     fn test_token_tracking_output_handler_creation() {

@@ -7,7 +7,7 @@ use tracing::info;
 pub async fn tools_command() -> Result<()> {
     info!("Listing available tools");
 
-    use trae_agent_core::tools::ToolRegistry;
+    use trae_agent_rs_core::tools::ToolRegistry;
 
     println!("🛠️  Available Tools\n");
 

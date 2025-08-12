@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
-use trae_agent_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
+use trae_agent_rs_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
 
 /// Tools that should not display status indicators
 static SILENT_TOOLS: &[&str] = &["sequentialthinking"];
@@ -37,7 +37,7 @@ pub struct CliOutputHandler {
     tool_formatter: ToolFormatter,
     diff_formatter: DiffFormatter,
     /// Track active tool executions for real-time updates
-    active_tools: Arc<Mutex<HashMap<String, trae_agent_core::output::ToolExecutionInfo>>>,
+    active_tools: Arc<Mutex<HashMap<String, trae_agent_rs_core::output::ToolExecutionInfo>>>,
 }
 
 impl CliOutputHandler {
@@ -59,7 +59,7 @@ impl CliOutputHandler {
     /// Handle real-time tool execution updates
     async fn handle_tool_update(
         &self,
-        tool_info: &trae_agent_core::output::ToolExecutionInfo,
+        tool_info: &trae_agent_rs_core::output::ToolExecutionInfo,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !self.config.realtime_updates {
             return Ok(());

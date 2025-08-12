@@ -280,7 +280,7 @@ Handles user input and displays the status bar at the bottom of the interface.
 
 ```rust
 use crate::interactive::app::run_interactive_mode;
-use trae_agent_core::Config;
+use trae_agent_rs_core::Config;
 use std::path::PathBuf;
 
 // Run interactive mode

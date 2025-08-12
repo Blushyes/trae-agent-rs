@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use trae_agent_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
+use trae_agent_rs_core::output::{AgentEvent, AgentOutput, MessageLevel, ToolExecutionStatus};
 
 /// Tools that should not display status indicators
 static SILENT_TOOLS: &[&str] = &["sequentialthinking", "status_report"];
@@ -72,7 +72,7 @@ pub struct InteractiveOutputHandler {
     /// Diff formatter for edit results
     diff_formatter: DiffFormatter,
     /// Track active tool executions
-    active_tools: Arc<Mutex<HashMap<String, trae_agent_core::output::ToolExecutionInfo>>>,
+    active_tools: Arc<Mutex<HashMap<String, trae_agent_rs_core::output::ToolExecutionInfo>>>,
 }
 
 impl InteractiveOutputHandler {

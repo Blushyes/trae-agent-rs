@@ -11,7 +11,7 @@ use iocraft::prelude::*;
 use regex::Regex;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
-use trae_agent_core::Config;
+use trae_agent_rs_core::Config;
 
 /// Represents a file reference found in user input
 #[derive(Debug, Clone)]

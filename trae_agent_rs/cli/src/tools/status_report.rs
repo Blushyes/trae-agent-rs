@@ -5,7 +5,7 @@ use crate::interactive::message_handler::AppMessage;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::broadcast;
-use trae_agent_core::tools::{Tool, ToolCall, ToolExample, ToolResult};
+use trae_agent_rs_core::tools::{Tool, ToolCall, ToolExample, ToolResult};
 
 /// Status reporting tool for interactive mode
 /// This tool is designed to be used exclusively in interactive mode to provide
@@ -61,7 +61,7 @@ impl Tool for StatusReportTool {
         })
     }
 
-    async fn execute(&self, call: ToolCall) -> trae_agent_core::error::Result<ToolResult> {
+    async fn execute(&self, call: ToolCall) -> trae_agent_rs_core::error::Result<ToolResult> {
         let status: String = call.get_parameter("status")?;
         let details: Option<String> = call.get_parameter("details").ok();
 
@@ -158,7 +158,7 @@ impl StatusReportToolFactory {
     }
 }
 
-impl trae_agent_core::tools::ToolFactory for StatusReportToolFactory {
+impl trae_agent_rs_core::tools::ToolFactory for StatusReportToolFactory {
     fn create(&self) -> Box<dyn Tool> {
         if let Some(ui_sender) = &self.ui_sender {
             Box::new(StatusReportTool::with_ui_sender(ui_sender.clone()))
@@ -180,7 +180,7 @@ impl trae_agent_core::tools::ToolFactory for StatusReportToolFactory {
 mod tests {
     use super::*;
     use serde_json::json;
-    use trae_agent_core::tools::ToolCall;
+    use trae_agent_rs_core::tools::ToolCall;
 
     #[tokio::test]
     async fn test_status_report_basic() {

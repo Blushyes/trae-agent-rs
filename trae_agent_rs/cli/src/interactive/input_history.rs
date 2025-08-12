@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use trae_agent_core::output::AgentOutput;
+use trae_agent_rs_core::output::AgentOutput;
 
 /// Maximum number of history entries to keep in memory and on disk
 const MAX_HISTORY_SIZE: usize = 1000;
@@ -302,7 +302,7 @@ impl Default for InputHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trae_agent_core::output::NullOutput;
+    use trae_agent_rs_core::output::NullOutput;
 
     #[tokio::test]
     async fn test_add_entry() {

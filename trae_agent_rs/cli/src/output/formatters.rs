@@ -1,7 +1,7 @@
 //! Formatting utilities for CLI output
 
 use std::path::Path;
-use trae_agent_core::output::{ToolExecutionInfo, ToolExecutionStatus};
+use trae_agent_rs_core::output::{ToolExecutionInfo, ToolExecutionStatus};
 
 // ANSI color codes
 const RED_BG: &str = "\x1b[41m"; // Red background

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use trae_agent_core::Config;
+use trae_agent_rs_core::Config;
 
 /// State for the interactive session
 #[derive(Debug, Clone, Serialize, Deserialize)]
