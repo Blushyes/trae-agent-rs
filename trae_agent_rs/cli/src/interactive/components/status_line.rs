@@ -137,8 +137,8 @@ pub fn DynamicStatusLine(
     }
 
     let elapsed = start_time.read().elapsed().as_secs();
-    let spinner_chars = ["✻", "✦", "✧", "✶"];
-    let spinner_index = ((elapsed / 1) % 4) as usize;
+    let spinner_chars = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
+    let spinner_index = ((elapsed / 1) % 8) as usize;
     let spinner = spinner_chars[spinner_index];
     let status_text = format!(
         "{} {}… ({}s · ↑ {} tokens · esc to interrupt)",
