@@ -2,6 +2,8 @@
 
 A high-performance Rust implementation of [Trae Agent](https://github.com/bytedance/trae-agent) - an LLM-based agent for software engineering tasks.
 
+![demo](./images/demo.gif)
+
 ## 🚀 Project Status
 
 This is a **production-ready** Rust implementation that provides a complete, feature-rich agent system with advanced UI and tool capabilities. Built as a high-performance port of the original [Trae Agent](https://github.com/bytedance/trae-agent) Python implementation, this version maintains full compatibility with the tool specifications while adding Rust-specific performance optimizations and enhanced UI features.
