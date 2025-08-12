@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [[bin]]
-name = "trae"
+name = "trae-rs"
 path = "src/main.rs"
 
 [dependencies]
