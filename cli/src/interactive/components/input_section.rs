@@ -14,6 +14,7 @@ use crate::interactive::message_handler::AppMessage;
 use iocraft::prelude::*;
 use std::cmp::min;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use trae_agent_rs_core::Config;
 use unicode_width::UnicodeWidthStr;
@@ -143,6 +144,8 @@ pub fn EnhancedTextInput(
     let search_results = hooks.use_state(|| Vec::<FileSearchResult>::new());
     let selected_file_index = hooks.use_state(|| 0usize);
     let current_query = hooks.use_state(|| String::new());
+    // Track last text input time to disambiguate paste vs. manual Enter
+    let last_text_time = hooks.use_state(|| Instant::now() - Duration::from_secs(10));
 
     // Cache for existing file references to avoid repeated parsing
     let cached_existing_refs = hooks.use_state(|| Vec::<String>::new());
@@ -167,6 +170,7 @@ pub fn EnhancedTextInput(
         let _project_path = project_path.clone();
         let mut cached_existing_refs = cached_existing_refs.clone();
         let mut last_input_for_refs = last_input_for_refs.clone();
+        let mut last_text_time = last_text_time.clone();
 
         move |event| {
             if !has_focus {
@@ -219,40 +223,50 @@ pub fn EnhancedTextInput(
                                 return;
                             }
                             KeyCode::Enter | KeyCode::Tab => {
-                                // Insert selected file
-                                if let Some(selected_result) =
-                                    search_results.read().get(selected_file_index.get())
-                                {
-                                    // Find the @ position and replace the entire @search_term with @absolute_path + space
-                                    if let Some(query) = extract_search_query(&value, pos) {
-                                        if let Some(at_pos) = value.rfind('@') {
-                                            // Find the end of the search term
-                                            let search_end = at_pos + 1 + query.len();
+                                // If this Enter comes immediately after burst typing/paste, treat as newline (not file pick)
+                                let recent_text = Instant::now()
+                                    .duration_since(*last_text_time.read())
+                                    <= Duration::from_millis(100);
+                                if recent_text && matches!(code, KeyCode::Enter) {
+                                    // Close popup and let the general handler below process Enter as newline
+                                    show_file_list.set(false);
+                                    // fallthrough to general handling by not returning
+                                } else {
+                                    // Insert selected file
+                                    if let Some(selected_result) =
+                                        search_results.read().get(selected_file_index.get())
+                                    {
+                                        // Find the @ position and replace the entire @search_term with @absolute_path + space
+                                        if let Some(query) = extract_search_query(&value, pos) {
+                                            if let Some(at_pos) = value.rfind('@') {
+                                                // Find the end of the search term
+                                                let search_end = at_pos + 1 + query.len();
 
-                                            let before_at = &value[..at_pos];
-                                            let after_search = &value[search_end..];
+                                                let before_at = &value[..at_pos];
+                                                let after_search = &value[search_end..];
 
-                                            // Create replacement: @absolute_path + space
-                                            let replacement =
-                                                format!("@{} ", selected_result.insertion_path);
+                                                // Create replacement: @absolute_path + space
+                                                let replacement =
+                                                    format!("@{} ", selected_result.insertion_path);
 
-                                            value = format!(
-                                                "{}{}{}",
-                                                before_at, replacement, after_search
-                                            );
-                                            pos = at_pos + replacement.len();
-                                            cursor_pos.set(pos);
-                                            on_change(value.clone());
+                                                value = format!(
+                                                    "{}{}{}",
+                                                    before_at, replacement, after_search
+                                                );
+                                                pos = at_pos + replacement.len();
+                                                cursor_pos.set(pos);
+                                                on_change(value.clone());
 
-                                            // Update cursor position
-                                            let (line, col) =
-                                                calculate_cursor_position(&value, pos);
-                                            on_cursor_position_change((line, col));
+                                                // Update cursor position
+                                                let (line, col) =
+                                                    calculate_cursor_position(&value, pos);
+                                                on_cursor_position_change((line, col));
+                                            }
                                         }
                                     }
+                                    show_file_list.set(false);
+                                    return;
                                 }
-                                show_file_list.set(false);
-                                return;
                             }
                             KeyCode::Esc => {
                                 show_file_list.set(false);
@@ -264,6 +278,8 @@ pub fn EnhancedTextInput(
 
                     match code {
                         KeyCode::Char(c) => {
+                            // Record time of recent text input
+                            last_text_time.set(Instant::now());
                             // Ensure we're at a character boundary before inserting
                             let safe_pos = pos.min(value.len());
                             let char_pos = value[..safe_pos].chars().count();
@@ -526,29 +542,39 @@ pub fn EnhancedTextInput(
                                     let (line, col) = calculate_cursor_position(&value, pos);
                                     on_cursor_position_change((line, col));
                                 }
-                            } else if modifiers.contains(KeyModifiers::SHIFT) {
-                                // Shift+Enter adds newline - use safe character insertion
-                                let safe_pos = pos.min(value.len());
-                                let char_pos = value[..safe_pos].chars().count();
-                                let mut chars: Vec<char> = value.chars().collect();
-                                chars.insert(char_pos, '\n');
-                                value = chars.into_iter().collect();
-
-                                // Update position to after the inserted newline
-                                pos = value
-                                    .char_indices()
-                                    .nth(char_pos + 1)
-                                    .map(|(i, _)| i)
-                                    .unwrap_or(value.len());
-                                changed = true;
-
-                                // Update cursor position
-                                let (line, col) = calculate_cursor_position(&value, pos);
-                                on_cursor_position_change((line, col));
                             } else {
-                                // Regular Enter submits
-                                on_submit(value.clone());
-                                return;
+                                // Heuristic: if Enter comes right after a burst of text input (e.g., from a paste),
+                                // treat it as a newline instead of submit.
+                                let recent_text = Instant::now()
+                                    .duration_since(*last_text_time.read())
+                                    <= Duration::from_millis(800);
+                                if modifiers.contains(KeyModifiers::SHIFT) || recent_text {
+                                    // Insert newline - use safe character insertion
+                                    let safe_pos = pos.min(value.len());
+                                    let char_pos = value[..safe_pos].chars().count();
+                                    let mut chars: Vec<char> = value.chars().collect();
+                                    chars.insert(char_pos, '\n');
+                                    value = chars.into_iter().collect();
+
+                                    // Update position to after the inserted newline
+                                    pos = value
+                                        .char_indices()
+                                        .nth(char_pos + 1)
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(value.len());
+                                    changed = true;
+
+                                    // Update cursor position
+                                    let (line, col) = calculate_cursor_position(&value, pos);
+                                    on_cursor_position_change((line, col));
+
+                                    // Update recent text time since we effectively inserted text
+                                    last_text_time.set(Instant::now());
+                                } else {
+                                    // Regular Enter submits
+                                    on_submit(value.clone());
+                                    return;
+                                }
                             }
                         }
                         KeyCode::Left => {
