@@ -1,10 +1,12 @@
 //! Interactive application using iocraft
 
 use crate::interactive::animation::UiAnimationConfig;
-use crate::interactive::components::input_section::{InputSection, InputSectionContext};
+use crate::interactive::components::input_section::InputSectionContext;
 use crate::interactive::components::logo::output_logo_to_terminal;
-use crate::interactive::components::status_line::{DynamicStatusLine, StatusLineContext};
+use crate::interactive::components::status_line::StatusLineContext;
 use crate::interactive::message_handler::{app_message_to_ui_message, AppMessage};
+use crate::interactive::pages::main_page::MainPage;
+use crate::interactive::router::{Route, UIRouter, UIRouterBuilder};
 use crate::interactive::terminal_output::{output_content_block, overwrite_previous_lines};
 use anyhow::Result;
 use iocraft::prelude::*;
@@ -531,22 +533,22 @@ fn TraeApp(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         ui_sender: app_context.ui_sender.clone(),
     };
 
-    element! {
-        View(
-            key: "main-container",
-            flex_direction: FlexDirection::Column,
-            height: 100pct,
-            width: 100pct,
-            padding: 1,
-            position: Position::Relative,
-            justify_content: JustifyContent::End, // Push content to bottom
-        ) {
-            // Dynamic status line (isolated component to prevent parent re-rendering)
-            DynamicStatusLine(key: "dynamic-status-line", context: status_context.clone())
+    // Create router configuration with main page
+    let router_props = UIRouterBuilder::new()
+        .add_route(Route::new("main", "Main").as_default(), move |_hooks| {
+            element! {
+                MainPage(
+                    status_context: status_context.clone(),
+                    input_context: input_context.clone()
+                )
+            }
+            .into()
+        })
+        .build()
+        .expect("Failed to build router");
 
-            // Fixed bottom area for input and status - this should never move
-            InputSection(key: "input-section-component", context: input_context.clone())
-        }
+    element! {
+        UIRouter(router: router_props.router, pages: router_props.pages, fallback_page: router_props.fallback_page)
     }
 }
 

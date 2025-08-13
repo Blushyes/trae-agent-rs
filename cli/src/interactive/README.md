@@ -47,7 +47,7 @@ The main entry point for the interactive mode, containing the `TraeApp` componen
 
 **Responsibilities:**
 
-- Manages the overall UI layout and component hierarchy
+- Manages the overall UI layout and component hierarchy using the Router system
 - Handles message broadcasting between components
 - Coordinates header output and message display
 - Integrates with the terminal output system
@@ -234,6 +234,25 @@ Shows real-time agent execution status, progress, and token usage.
 - Elapsed time tracking
 - Interrupt instruction display
 
+### `router.rs` - Router Component
+
+Provides page routing and navigation functionality using iocraft's conditional rendering.
+
+**Key Components:**
+
+- `Router`: iocraft component that renders different pages based on current route
+- `RouterProps`: Component properties containing router state and page renderers
+- `RouterBuilder`: Builder pattern for creating router configurations
+- `PageRenderer`: Type alias for page render functions
+
+**Features:**
+
+- Conditional rendering based on route state
+- Support for multiple pages with different components
+- Fallback page for unknown routes
+- Builder pattern for easy configuration
+- Integration with core router types from `trae_agent_rs_core::interactive::router`
+
 ### `input_section.rs` - Input Section
 
 Handles user input and displays the status bar at the bottom of the interface.
@@ -304,6 +323,49 @@ let wrapped = wrap_text("Long text here", 80);
 let anim_config = UiAnimationConfig::from_env();
 ```
 
+## Router (`router/`)
+
+### Router System for Page Navigation
+
+A comprehensive routing system designed specifically for iocraft-based applications.
+
+**Key Components:**
+
+- `Route`: Route definition with metadata and configuration
+- `RouteId`: Unique identifier for routes
+- `Router`: Core router with state management and navigation
+- `RouterState`: Current navigation state and history
+- `RouterConfig`: Router configuration and route registry
+- `IocraftRouter`: iocraft component for rendering pages based on routes
+- `IocraftRouterBuilder`: Builder pattern for creating router configurations
+
+**Features:**
+
+- Type-safe route definitions and navigation
+- Navigation history with configurable limits
+- Default route support
+- Conditional rendering based on current route
+- Builder pattern for easy configuration
+- Fallback page support for unknown routes
+
+## Pages (`pages/`)
+
+### `main_page.rs` - Main Page Component
+
+The primary page component that contains the status line and input section.
+
+**Key Components:**
+
+- `MainPage`: iocraft component that renders the main interface
+- `MainPageProps`: Component properties containing status and input contexts
+
+**Features:**
+
+- Displays `DynamicStatusLine` for real-time status updates
+- Displays `InputSection` for user input handling
+- Maintains the same layout as the original TraeApp
+- Proper context passing to child components
+
 ### Extending the System
 
 To add new UI components:
@@ -312,7 +374,14 @@ To add new UI components:
 2. Define component props and context structures
 3. Implement iocraft component with proper event handling
 4. Add component to `components/mod.rs`
-5. Integrate with main app in `app.rs`
+5. Integrate with main app in `app.rs` or add as a new page
+
+To add new pages:
+
+1. Create page component file in `pages/`
+2. Define page props and implement iocraft component
+3. Add page to `pages/mod.rs`
+4. Register page with router in `app.rs` using `RouterBuilder`
 
 ### Environment Configuration
 
