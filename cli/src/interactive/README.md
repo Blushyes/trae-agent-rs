@@ -270,6 +270,7 @@ Handles user input and displays the status bar at the bottom of the interface.
 - Task execution triggering
 - Status bar display with project information
 - Placeholder text for empty input
+- Robust cursor rendering with soft-wrapping and wide-character support (fixed bug where cursor disappeared or shifted on overlong lines)
 
 ## Architecture Design
 

@@ -42,31 +42,44 @@ fn calculate_cursor_position(text: &str, byte_pos: usize) -> (usize, usize) {
     (line_number, column_number)
 }
 
-/// Calculate cursor display position for rendering
+/// Calculate cursor display position for rendering with soft-wrapping awareness
 /// Returns (display_line, display_column) where both are 0-based for UI positioning
 fn calculate_cursor_display_position(
     text: &str,
     byte_pos: usize,
-    _max_width: usize,
+    max_width: usize,
 ) -> (usize, usize) {
     if text.is_empty() {
         return (0, 0);
     }
 
     let safe_pos = byte_pos.min(text.len());
-    let text_before_cursor = &text[..safe_pos];
 
-    // Count display lines (number of newlines)
-    let display_line = text_before_cursor.matches('\n').count();
+    // Traverse characters up to the cursor and simulate wrapping using display width
+    let mut display_line = 0usize;
+    let mut current_line_width = 0usize;
 
-    // Find the start of the current line
-    let current_line_start = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let current_line_text = &text_before_cursor[current_line_start..];
+    let mut iter = text.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        if idx >= safe_pos {
+            break;
+        }
+        if ch == '\n' {
+            // Hard line break
+            display_line += 1;
+            current_line_width = 0;
+            continue;
+        }
+        let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        // If adding this char would exceed the width and we already have something on this line, wrap before it
+        if max_width > 0 && current_line_width > 0 && current_line_width + char_width > max_width {
+            display_line += 1;
+            current_line_width = 0;
+        }
+        current_line_width += char_width;
+    }
 
-    // Count display characters in current line (using Unicode width)
-    let display_column = current_line_text.width();
-
-    (display_line, display_column)
+    (display_line, current_line_width)
 }
 
 #[derive(Clone, Props)]
@@ -726,9 +739,11 @@ pub fn EnhancedTextInput(
 
                     // Render cursor if component has focus
                     #(if props.has_focus {
-                        // Calculate cursor position in display coordinates
+                        // Calculate cursor position in display coordinates (wrap-aware)
                         let cursor_pos = cursor_pos.get();
-                        let (cursor_line, cursor_col) = calculate_cursor_display_position(&props.value, cursor_pos, width as usize - 2);
+                        let (cursor_line, cursor_col) = calculate_cursor_display_position(&props.value, cursor_pos, effective_width);
+                        // Clamp left within the drawable area to avoid off-by-one overflow
+                        let clamped_left = min(cursor_col, effective_width.saturating_sub(1)) as u16;
 
                         // Get the character at cursor position for semi-transparent effect
                         let cursor_char = if props.value.is_empty() && !props.placeholder.is_empty() {
@@ -737,9 +752,10 @@ pub fn EnhancedTextInput(
                         } else {
                             // Show space or character at cursor position
                             let chars: Vec<char> = props.value.chars().collect();
-                            let char_pos = cursor_pos.min(chars.len());
-                            if char_pos < chars.len() {
-                                chars[char_pos]
+                            // Convert byte index to char index safely
+                            let char_idx = props.value[..cursor_pos].chars().count();
+                            if char_idx < chars.len() {
+                                chars[char_idx]
                             } else {
                                 ' '
                             }
@@ -750,7 +766,7 @@ pub fn EnhancedTextInput(
                                 key: "cursor",
                                 position: Position::Absolute,
                                 top: cursor_line as u16,
-                                left: cursor_col as u16,
+                                left: clamped_left,
                                 width: 1,
                                 height: 1,
                                 background_color: props.cursor_color.unwrap_or(Color::Rgb { r: 200, g: 200, b: 200 }), // Light grey background
@@ -1184,5 +1200,31 @@ mod tests {
             calculate_cursor_display_position(unicode_text, 13, 80),
             (1, 4)
         ); // End (width 2 per char)
+    }
+
+    #[test]
+    fn test_calculate_cursor_display_position_soft_wrap_ascii() {
+        // width = 4, ASCII widths = 1 per char
+        let text = "abcdefgh";
+        // Start
+        assert_eq!(calculate_cursor_display_position(text, 0, 4), (0, 0));
+        // Within first line
+        assert_eq!(calculate_cursor_display_position(text, 1, 4), (0, 1));
+        assert_eq!(calculate_cursor_display_position(text, 4, 4), (0, 4)); // exactly fits
+                                                                           // Wrap to second display line
+        assert_eq!(calculate_cursor_display_position(text, 5, 4), (1, 1));
+        assert_eq!(calculate_cursor_display_position(text, 8, 4), (1, 4));
+    }
+
+    #[test]
+    fn test_calculate_cursor_display_position_soft_wrap_unicode() {
+        // width = 4, Chinese characters have width 2
+        let text = "你好世界"; // 4 chars, each width 2
+                               // Byte positions for each char boundary: 0, 3, 6, 9, 12
+        assert_eq!(calculate_cursor_display_position(text, 0, 4), (0, 0));
+        assert_eq!(calculate_cursor_display_position(text, 3, 4), (0, 2));
+        assert_eq!(calculate_cursor_display_position(text, 6, 4), (0, 4)); // exactly fits
+        assert_eq!(calculate_cursor_display_position(text, 9, 4), (1, 2)); // wrapped
+        assert_eq!(calculate_cursor_display_position(text, 12, 4), (1, 4));
     }
 }
