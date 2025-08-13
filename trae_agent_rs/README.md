@@ -1,1 +1,3 @@
-See [trae-agent-rs](https://github.com/blushyes/trae-agent-rs) for more information.
+This project has been migrated to the [Lode](https://github.com/Blushyes/Lode) repository.
+
+这个项目已经迁移至[Lode](https://github.com/Blushyes/Lode)。
